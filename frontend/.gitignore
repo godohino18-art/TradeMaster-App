@@ -1,0 +1,13 @@
+# Python関連の不要ファイル
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 個人のデータベース（超重要：アップロードしない）
+trading_data.db
+
+# React関連の巨大ファイル
+node_modules/
+dist/
+.env
