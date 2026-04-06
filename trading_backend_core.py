@@ -14,7 +14,7 @@ import requests
 # --- 機械学習 (ランダムフォレスト: 軽量＆爆速) ---
 from sklearn.ensemble import RandomForestRegressor
 
-# --- データベース (SQLite) ---
+# --- データベース (Supabase PostgreSQL) ---
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
@@ -24,10 +24,13 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1489169956129214496/axw4OI8cP43aHkrUootqZ828vqa2w9krDOBQyZybg9tdQHxxmzbuoUQG5kZQ4-aA3iNk"
 
 # ==========================================
-# 1. データベース設定
+# 1. データベース設定 (Supabase クラウドDBへ進化！)
 # ==========================================
-SQLALCHEMY_DATABASE_URL = "sqlite:///./trading_data.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+# パスワード内の「&」はシステムエラーを防ぐため「%26」に変換しています
+SQLALCHEMY_DATABASE_URL = "postgresql://postgres:W%26f4z5Di8h9q@db.ezasvrijqcpgroyaayxf.supabase.co:5432/postgres"
+
+# SQLite用の設定を消し、クラウドDB用の設定に変更
+engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -49,6 +52,7 @@ class TradeHistory(Base):
     profit = Column(Float) 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+# データベースのテーブルを作成（Supabase上に自動で作られます）
 Base.metadata.create_all(bind=engine)
 
 def get_db():
@@ -59,7 +63,7 @@ def get_db():
 # ==========================================
 # 2. FastAPI 初期化
 # ==========================================
-app = FastAPI(title="TradeMaster.AI API v1.2 (爆速版 & 通知対応)")
+app = FastAPI(title="TradeMaster.AI API v1.3 (Supabase連携版)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 TARGET_TICKERS = {
@@ -126,7 +130,6 @@ def analyze_single_ticker(ticker, name):
         df = add_technical_indicators(df)
         current_price = float(df['Close'].iloc[-1])
         
-        # 重いLSTMから爆速のランダムフォレストに変更！
         prediction = predict_with_rf(df)
         
         confidence = 0
@@ -152,22 +155,24 @@ def background_monitoring():
     while True:
         time.sleep(60) 
         
-        db = SessionLocal()
-        portfolio_items = db.query(PortfolioItem).all()
-        
-        for item in portfolio_items:
-            df = fetch_stock_data(item.ticker, period="1d", interval="5m")
-            if df is not None and not df.empty:
-                current_price = float(df['Close'].iloc[-1])
-                profit = (current_price - item.avg_price) * item.shares
-                
-                # ユーザーの要望：「今売ったら＋いくら得します」の通知
-                if profit >= 5000: 
-                    msg = f"💸 **【利確チャンス】**\n『{item.name}』を今すぐ売却すれば、**＋{int(profit):,}円** の利益が確定します！\nアプリを開いてSELL画面から売却してください。"
-                    send_discord_notification(msg)
-                    time.sleep(5) 
+        try:
+            db = SessionLocal()
+            portfolio_items = db.query(PortfolioItem).all()
+            
+            for item in portfolio_items:
+                df = fetch_stock_data(item.ticker, period="1d", interval="5m")
+                if df is not None and not df.empty:
+                    current_price = float(df['Close'].iloc[-1])
+                    profit = (current_price - item.avg_price) * item.shares
                     
-        db.close()
+                    if profit >= 5000: 
+                        msg = f"💸 **【利確チャンス】**\n『{item.name}』を今すぐ売却すれば、**＋{int(profit):,}円** の利益が確定します！\nアプリを開いてSELL画面から売却してください。"
+                        send_discord_notification(msg)
+                        time.sleep(5) 
+                        
+            db.close()
+        except Exception as e:
+            print(f"監視スレッドエラー: {e}")
 
 @app.on_event("startup")
 def startup_event():
@@ -250,5 +255,5 @@ def sell_stock(item_id: int, db: Session = Depends(get_db)):
     return {"status": "success", "profit": profit}
 
 if __name__ == "__main__":
-    print("=== TradeMaster.AI API Server (Ver 1.2 爆速版) Starting ===")
+    print("=== TradeMaster.AI API Server (Ver 1.3 Supabase連携版) Starting ===")
     uvicorn.run(app, host="0.0.0.0", port=8000)
