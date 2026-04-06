@@ -17,6 +17,9 @@ const generateMockChart = (basePrice) => {
 
 const COLORS = ['#34d399', '#3b82f6', '#8b5cf6', '#f59e0b', '#ec4899'];
 
+// ★ RenderのサーバーURLに変えました！
+const API_BASE_URL = 'https://trademaster-backend-7ulm.onrender.com';
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('HOME');
   const [isConnected, setIsConnected] = useState(false);
@@ -32,26 +35,18 @@ export default function App() {
     price: 0, predictedPrice: 0, action: 'WAIT', confidence: 0, chartData: [], rsi: 50
   });
 
-  // DBから取得する本物のポートフォリオデータ
   const [portfolio, setPortfolio] = useState([]);
   const [tradeHistory, setTradeHistory] = useState([]);
-  
-  // 資産状況
-  const [cash, setCash] = useState(3000000); // 初期資金300万円
+  const [cash, setCash] = useState(3000000); 
 
-  // ==========================================
-  // DBから自分の資産状況を取得する関数
-  // ==========================================
   const fetchPortfolioFromDB = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/portfolio');
+      const res = await fetch(`${API_BASE_URL}/api/portfolio`);
       if (res.ok) {
         const data = await res.json();
-        // 取得したポートフォリオに、計算用の currentPrice をセット（最初は買値と同じにしておく）
         setPortfolio(data.portfolio.map(p => ({ ...p, currentPrice: p.avgPrice })));
         setTradeHistory(data.history);
         
-        // もしSELL画面を開いていて、選択中の株が売却されて無くなった場合、別の株を選択する
         if (data.portfolio.length > 0 && !data.portfolio.find(p => p.ticker === selectedSellTicker)) {
           setSelectedSellTicker(data.portfolio[0].ticker);
         }
@@ -60,7 +55,6 @@ export default function App() {
       }
     } catch (e) { 
       console.warn("DBに接続できませんでした。プレビュー用のモックデータを表示します。"); 
-      // Canvas環境などAPIに繋がらない場合のフォールバックデータ
       setPortfolio(prev => prev.length > 0 ? prev : [
         { id: 1, ticker: '9984.T', name: 'ソフトバンクG', shares: 100, avgPrice: 8500, currentPrice: 8650 },
         { id: 2, ticker: '6920.T', name: 'レーザーテック', shares: 50, avgPrice: 39000, currentPrice: 38500 },
@@ -73,30 +67,25 @@ export default function App() {
     }
   };
 
-  // 初回起動時にDBからデータを読み込む
   useEffect(() => {
     fetchPortfolioFromDB();
   }, []);
 
-  // ==========================================
-  // 株を買う関数 (API通信)
-  // ==========================================
   const executeBuy = async (ticker, name) => {
-    if (!window.confirm(`${name} を100株購入しますか？\n(ディープラーニングの買いシグナルに従います)`)) return;
+    if (!window.confirm(`${name} を100株購入しますか？\n(AIの買いシグナルに従います)`)) return;
     try {
-      const res = await fetch('http://localhost:8000/api/portfolio/buy', {
+      const res = await fetch(`${API_BASE_URL}/api/portfolio/buy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticker, shares: 100 }) // 今回は固定で100株
+        body: JSON.stringify({ ticker, shares: 100 })
       });
       if (res.ok) {
         alert('🎉 購入が完了しました！HOME画面のポートフォリオに追加されています。');
-        fetchPortfolioFromDB(); // DB再読み込み
+        fetchPortfolioFromDB();
       } else {
         throw new Error("Network Error");
       }
     } catch (e) { 
-      // モック用フォールバック
       alert('【モックモード】プレビュー環境のため購入処理をシミュレートしました。'); 
       const price = currentAnalysis.price || 3000;
       setPortfolio(prev => [...prev, { id: Date.now(), ticker, name, shares: 100, avgPrice: price, currentPrice: price }]);
@@ -105,27 +94,22 @@ export default function App() {
     }
   };
 
-  // ==========================================
-  // 株を売る関数 (API通信)
-  // ==========================================
   const executeSell = async (id, name, isAuto = false) => {
     if (!isAuto && !window.confirm(`${name} を売却して利益を確定させますか？`)) return;
     try {
-      const res = await fetch(`http://localhost:8000/api/portfolio/sell/${id}`, { method: 'POST' });
+      const res = await fetch(`${API_BASE_URL}/api/portfolio/sell/${id}`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         if (isAuto) {
-          // AUTO SELLの時は画面上部に通知を出す（簡易版）
           console.log(`[AUTO SELL発動] ${name} を自動売却しました。利益: ¥${Math.round(data.profit).toLocaleString()}`);
         } else {
           alert(`💸 売却完了！\n利益: ¥${Math.round(data.profit).toLocaleString()} を獲得しました！`);
         }
-        fetchPortfolioFromDB(); // DB再読み込み
+        fetchPortfolioFromDB();
       } else {
         throw new Error("Network Error");
       }
     } catch (e) { 
-      // モック用フォールバック
       const stock = portfolio.find(p => p.id === id);
       if (stock) {
         const profit = (stock.currentPrice - stock.avgPrice) * stock.shares;
@@ -141,12 +125,10 @@ export default function App() {
     }
   };
 
-
-  // AIおすすめ銘柄スキャン (30秒ごと)
   useEffect(() => {
     const fetchRecommendations = async () => {
       try {
-        const res = await fetch('http://localhost:8000/api/recommend');
+        const res = await fetch(`${API_BASE_URL}/api/recommend`);
         if (res.ok) {
           const data = await res.json();
           setRecommendations(data.recommendations.slice(0, 10));
@@ -158,7 +140,6 @@ export default function App() {
     return () => clearInterval(int);
   }, []);
 
-  // 選択銘柄のAPI分析 ＆ リアルタイム株価更新
   useEffect(() => {
     if (activeTab === 'HOME') return;
 
@@ -167,7 +148,7 @@ export default function App() {
     
     const fetchApiData = async () => {
       try {
-        const response = await fetch(`http://localhost:8000/api/analyze/${activeTicker}`);
+        const response = await fetch(`${API_BASE_URL}/api/analyze/${activeTicker}`);
         if (response.ok) {
           const data = await response.json();
           setIsConnected(true);
@@ -205,10 +186,8 @@ export default function App() {
             };
           });
 
-          // 保有株の価格を更新 ＆ AUTO SELLの判定
           setPortfolio(prev => {
             return prev.map(stock => {
-              // 選択中の株はAPIの実データで更新、それ以外は擬似的に微変動（UIの演出）
               let newPrice = stock.currentPrice;
               if (stock.ticker === activeTicker) {
                 newPrice = data.currentPrice;
@@ -216,7 +195,6 @@ export default function App() {
                 newPrice = newPrice * (1 + (Math.random() - 0.5) * 0.002);
               }
 
-              // 【AUTO SELL機能】: +1.5%以上の利益が出たら自動で売りAPIを叩く
               if (autoSell) {
                 const profitPct = (newPrice - stock.avgPrice) / stock.avgPrice;
                 if (profitPct >= 0.015) {
@@ -237,7 +215,7 @@ export default function App() {
 
   const getAiInsight = () => {
     const { price, predictedPrice, rsi } = currentAnalysis;
-    if (!price || !predictedPrice) return "LSTMエンジンが過去の時系列パターンから市場をディープラーニング解析中です...";
+    if (!price || !predictedPrice) return "AIエンジンが過去の時系列パターンから市場をディープラーニング解析中です...";
 
     const diff = predictedPrice - price;
     const diffPercent = ((diff / price) * 100).toFixed(1);
@@ -246,7 +224,7 @@ export default function App() {
       if (diff > 0) {
         return (
           <span>
-            LSTM（ディープラーニング）の予測モデルによれば、直近の時系列パターンから強い反発シグナルを検知しました。近日中に <strong className="text-emerald-400">¥{predictedPrice.toLocaleString()} (期待値 +{diffPercent}%)</strong> まで上昇する確率が非常に高いです。AIは<strong className="text-white">「今が買い時」</strong>と強く推奨しています。
+            AIの予測モデルによれば、直近の時系列パターンから強い反発シグナルを検知しました。近日中に <strong className="text-emerald-400">¥{predictedPrice.toLocaleString()} (期待値 +{diffPercent}%)</strong> まで上昇する確率が非常に高いです。AIは<strong className="text-white">「今が買い時」</strong>と強く推奨しています。
           </span>
         );
       } else {
@@ -274,9 +252,7 @@ export default function App() {
     }
   };
 
-  // --- 資産の計算 ---
   const totalStockValue = portfolio.reduce((acc, stock) => acc + (stock.currentPrice * stock.shares), 0);
-  // DBの取引履歴から実際の「確定利益」を合算
   const realizedProfit = tradeHistory.reduce((acc, trade) => acc + (trade.profit || 0), 0);
   const totalAssets = cash + realizedProfit + totalStockValue;
   const unrealizedProfit = portfolio.reduce((acc, stock) => acc + ((stock.currentPrice - stock.avgPrice) * stock.shares), 0);
@@ -294,7 +270,7 @@ export default function App() {
               <Cpu size={22} strokeWidth={2.5} />
             </div>
             <h1 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 tracking-tight">
-              TradeMaster<span className="text-blue-400">.AI</span> <span className="text-[10px] text-indigo-400 ml-1 border border-indigo-500/30 px-1.5 py-0.5 rounded">LSTM ENGINE</span>
+              TradeMaster<span className="text-blue-400">.AI</span> <span className="text-[10px] text-indigo-400 ml-1 border border-indigo-500/30 px-1.5 py-0.5 rounded">FAST ENGINE</span>
             </h1>
             <div className={`ml-4 px-3 py-1 hidden sm:flex items-center rounded-full border text-[10px] font-bold uppercase tracking-widest ${isConnected ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-gray-800 text-gray-500 border-gray-700'}`}>
               {isConnected ? <Wifi size={12} className="mr-1.5" /> : <WifiOff size={12} className="mr-1.5" />}
@@ -484,7 +460,6 @@ export default function App() {
                       <span className="text-5xl font-black text-white font-mono">¥{currentAnalysis.price ? Math.round(currentAnalysis.price).toLocaleString() : '---'}</span>
                     </div>
                   </div>
-                  {/* 【重要】 購入ボタンにAPIを繋ぎ込みました */}
                   <button 
                     onClick={() => executeBuy(selectedBuyTicker, buyTickerName)}
                     className="flex items-center px-8 py-4 bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 rounded-xl font-bold text-lg transition-all transform hover:scale-105"
@@ -497,7 +472,7 @@ export default function App() {
                 <div className="bg-indigo-500/10 border border-indigo-500/30 p-5 rounded-xl mb-6 flex items-start">
                   <Cpu className="text-indigo-400 mt-1 mr-4 flex-shrink-0" size={24} />
                   <div>
-                    <h3 className="text-indigo-400 font-bold mb-1">LSTM 買い時予測アドバイス</h3>
+                    <h3 className="text-indigo-400 font-bold mb-1">AI 買い時予測アドバイス</h3>
                     <p className="text-gray-300 text-sm leading-relaxed">{getAiInsight()}</p>
                   </div>
                 </div>
@@ -584,7 +559,6 @@ export default function App() {
                             {autoSell ? <ToggleRight className="text-indigo-400" size={20} /> : <ToggleLeft className="text-gray-600" size={20} />}
                           </div>
                           
-                          {/* 【重要】 売却ボタンにAPIを繋ぎ込みました */}
                           <button 
                             onClick={() => executeSell(stock.id, stock.name)}
                             className="flex items-center px-8 py-3 bg-rose-500 hover:bg-rose-600 text-white shadow-lg shadow-rose-500/20 rounded-xl font-bold transition-all"
@@ -602,7 +576,7 @@ export default function App() {
                 <div className={`border p-5 rounded-xl mb-6 flex items-start ${currentAnalysis.predictedPrice < currentAnalysis.price ? 'bg-rose-500/10 border-rose-500/30' : 'bg-indigo-500/10 border-indigo-500/30'}`}>
                   <AlertCircle className={`mt-1 mr-4 flex-shrink-0 ${currentAnalysis.predictedPrice < currentAnalysis.price ? 'text-rose-400' : 'text-indigo-400'}`} size={24} />
                   <div>
-                    <h3 className={`font-bold mb-1 ${currentAnalysis.predictedPrice < currentAnalysis.price ? 'text-rose-400' : 'text-indigo-400'}`}>LSTM 売却タイミング予測</h3>
+                    <h3 className={`font-bold mb-1 ${currentAnalysis.predictedPrice < currentAnalysis.price ? 'text-rose-400' : 'text-indigo-400'}`}>AI 売却タイミング予測</h3>
                     <p className="text-gray-300 text-sm leading-relaxed">{getAiInsight()}</p>
                   </div>
                 </div>
