@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Line, PieChart, Pie, Cell } from 'recharts';
-import { Crosshair, Cpu, Star, ToggleLeft, ToggleRight, Wifi, WifiOff, PlayCircle, Wallet, AlertCircle, ShoppingCart, ArrowDownToLine, Home, DollarSign, PieChart as PieChartIcon, History, TrendingUp, TrendingDown, Target, ArrowRight } from 'lucide-react';
+import { Crosshair, Cpu, Star, ToggleLeft, ToggleRight, Wifi, WifiOff, PlayCircle, Wallet, AlertCircle, ShoppingCart, ArrowDownToLine, Home, DollarSign, PieChart as PieChartIcon, History, TrendingUp, TrendingDown, Target, ArrowRight, LogOut, User } from 'lucide-react';
+
+// ==========================================
+// 1. Supabase 接続設定 (APIを直接呼び出す方式に変更し、プレビューエラーを回避)
+// ==========================================
+const supabaseUrl = 'https://ezasvrijqcpgroyaayxf.supabase.co';
+const supabaseAnonKey = 'sb_publishable_YHWVqLqCJjrQt0UJUgFF_w_AncjEZ2j';
 
 const generateMockChart = (basePrice) => {
   const data = [];
@@ -16,11 +22,142 @@ const generateMockChart = (basePrice) => {
 };
 
 const COLORS = ['#34d399', '#3b82f6', '#8b5cf6', '#f59e0b', '#ec4899'];
-
-// ★ RenderのサーバーURLに変えました！
 const API_BASE_URL = 'https://trademaster-backend-7ulm.onrender.com';
 
+// ==========================================
+// 2. ログイン画面コンポーネント
+// ==========================================
+function AuthScreen({ onAuthSuccess }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [isLoginMode, setIsLoginMode] = useState(true);
+
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setErrorMsg('');
+    try {
+      if (isLoginMode) {
+        // 標準のfetchを使ってSupabaseの認証APIと直接通信
+        const res = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+          method: 'POST',
+          headers: { 'apikey': supabaseAnonKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error_description || data.msg || 'ログインに失敗しました');
+        onAuthSuccess(data);
+      } else {
+        const res = await fetch(`${supabaseUrl}/auth/v1/signup`, {
+          method: 'POST',
+          headers: { 'apikey': supabaseAnonKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error_description || data.msg || '登録に失敗しました');
+        alert('🎉 登録成功！ログインしてください。');
+        setIsLoginMode(true);
+      }
+    } catch (error) {
+      setErrorMsg(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-900 flex items-center justify-center font-sans px-4">
+      <div className="max-w-md w-full bg-gray-800 rounded-2xl shadow-2xl border border-gray-700 p-8">
+        <div className="text-center mb-8">
+          <div className="inline-block bg-gradient-to-br from-blue-600 to-indigo-600 text-white p-3 rounded-xl shadow-lg mb-4">
+            <Cpu size={32} strokeWidth={2.5} />
+          </div>
+          <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 tracking-tight">
+            TradeMaster<span className="text-blue-400">.AI</span>
+          </h1>
+          <p className="text-gray-400 text-sm mt-2 font-bold uppercase tracking-widest">Multi-User Platform</p>
+        </div>
+
+        {errorMsg && (
+          <div className="bg-rose-500/10 border border-rose-500/30 text-rose-400 p-3 rounded-lg mb-6 text-sm">
+            {errorMsg}
+          </div>
+        )}
+
+        <form onSubmit={handleAuth} className="space-y-5">
+          <div>
+            <label className="block text-sm font-bold text-gray-400 mb-1">Email</label>
+            <input 
+              type="email" required
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+              value={email} onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-bold text-gray-400 mb-1">Password</label>
+            <input 
+              type="password" required minLength="6"
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+              value={password} onChange={(e) => setPassword(e.target.value)}
+              placeholder="6文字以上"
+            />
+          </div>
+
+          <button 
+            type="submit" disabled={loading}
+            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg shadow-blue-500/30 transition-all disabled:opacity-50 mt-4"
+          >
+            {loading ? '処理中...' : isLoginMode ? 'ログイン' : '新規アカウント登録'}
+          </button>
+        </form>
+
+        <div className="mt-6 text-center">
+          <button 
+            onClick={() => { setIsLoginMode(!isLoginMode); setErrorMsg(''); }}
+            className="text-sm text-gray-400 hover:text-white transition-colors underline"
+          >
+            {isLoginMode ? 'アカウントをお持ちでない方はこちら (新規登録)' : 'すでにアカウントをお持ちの方はこちら (ログイン)'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// 3. メインアプリ (ログイン状態の管理)
+// ==========================================
 export default function App() {
+  const [session, setSession] = useState(() => {
+    const stored = localStorage.getItem('supabase_session');
+    return stored ? JSON.parse(stored) : null;
+  });
+
+  const handleLogout = () => {
+    localStorage.removeItem('supabase_session');
+    setSession(null);
+  };
+
+  if (!session) {
+    return <AuthScreen onAuthSuccess={(data) => {
+      localStorage.setItem('supabase_session', JSON.stringify(data));
+      setSession(data);
+    }} />;
+  }
+
+  return <MainApp session={session} onLogout={handleLogout} />;
+}
+
+// ==========================================
+// 4. メイン画面のUIとロジック
+// ==========================================
+function MainApp({ session, onLogout }) {
+  const userId = session.user.id; 
+  const userEmail = session.user.email;
+
   const [activeTab, setActiveTab] = useState('HOME');
   const [isConnected, setIsConnected] = useState(false);
   const [recommendations, setRecommendations] = useState([]);
@@ -41,12 +178,11 @@ export default function App() {
 
   const fetchPortfolioFromDB = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/portfolio`);
+      const res = await fetch(`${API_BASE_URL}/api/portfolio?user_id=${userId}`);
       if (res.ok) {
         const data = await res.json();
         setPortfolio(data.portfolio.map(p => ({ ...p, currentPrice: p.avgPrice })));
         setTradeHistory(data.history);
-        
         if (data.portfolio.length > 0 && !data.portfolio.find(p => p.ticker === selectedSellTicker)) {
           setSelectedSellTicker(data.portfolio[0].ticker);
         }
@@ -54,30 +190,21 @@ export default function App() {
         throw new Error("API Response not OK");
       }
     } catch (e) { 
-      console.warn("DBに接続できませんでした。プレビュー用のモックデータを表示します。"); 
-      setPortfolio(prev => prev.length > 0 ? prev : [
-        { id: 1, ticker: '9984.T', name: 'ソフトバンクG', shares: 100, avgPrice: 8500, currentPrice: 8650 },
-        { id: 2, ticker: '6920.T', name: 'レーザーテック', shares: 50, avgPrice: 39000, currentPrice: 38500 },
-        { id: 3, ticker: '8035.T', name: '東京エレクトロン', shares: 100, avgPrice: 35000, currentPrice: 35200 }
-      ]);
-      setTradeHistory(prev => prev.length > 0 ? prev : [
-        { date: '今日 13:45', action: 'AUTO SELL', name: '三菱UFJ', profit: 45000 },
-        { date: '今日 10:15', action: 'BUY', name: 'レーザーテック', profit: 0 }
-      ]);
+      console.warn("DB接続エラー"); 
     }
   };
 
   useEffect(() => {
     fetchPortfolioFromDB();
-  }, []);
+  }, [userId]);
 
   const executeBuy = async (ticker, name) => {
-    if (!window.confirm(`${name} を100株購入しますか？\n(AIの買いシグナルに従います)`)) return;
+    if (!window.confirm(`${name} を100株購入しますか？`)) return;
     try {
       const res = await fetch(`${API_BASE_URL}/api/portfolio/buy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticker, shares: 100 })
+        body: JSON.stringify({ ticker, shares: 100, user_id: userId }) 
       });
       if (res.ok) {
         alert('🎉 購入が完了しました！HOME画面のポートフォリオに追加されています。');
@@ -85,19 +212,13 @@ export default function App() {
       } else {
         throw new Error("Network Error");
       }
-    } catch (e) { 
-      alert('【モックモード】プレビュー環境のため購入処理をシミュレートしました。'); 
-      const price = currentAnalysis.price || 3000;
-      setPortfolio(prev => [...prev, { id: Date.now(), ticker, name, shares: 100, avgPrice: price, currentPrice: price }]);
-      setTradeHistory(prev => [{ date: new Date().toLocaleTimeString(), action: 'BUY', name, profit: 0 }, ...prev]);
-      setCash(prev => prev - (price * 100));
-    }
+    } catch (e) { alert("エラーが発生しました。"); }
   };
 
   const executeSell = async (id, name, isAuto = false) => {
     if (!isAuto && !window.confirm(`${name} を売却して利益を確定させますか？`)) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/portfolio/sell/${id}`, { method: 'POST' });
+      const res = await fetch(`${API_BASE_URL}/api/portfolio/sell/${id}?user_id=${userId}`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         if (isAuto) {
@@ -109,20 +230,7 @@ export default function App() {
       } else {
         throw new Error("Network Error");
       }
-    } catch (e) { 
-      const stock = portfolio.find(p => p.id === id);
-      if (stock) {
-        const profit = (stock.currentPrice - stock.avgPrice) * stock.shares;
-        if (isAuto) {
-          console.log(`[AUTO SELL (MOCK)] ${name} を自動売却しました。利益: ¥${Math.round(profit).toLocaleString()}`);
-        } else {
-          alert(`【モックモード】プレビュー環境のため売却シミュレーション完了！\n利益: ¥${Math.round(profit).toLocaleString()} を獲得しました！`);
-        }
-        setPortfolio(prev => prev.filter(p => p.id !== id));
-        setTradeHistory(prev => [{ date: new Date().toLocaleTimeString(), action: isAuto ? 'AUTO SELL' : 'SELL', name, profit }, ...prev]);
-        setCash(prev => prev + (stock.avgPrice * stock.shares) + profit);
-      }
-    }
+    } catch (e) { alert("エラーが発生しました。"); }
   };
 
   useEffect(() => {
@@ -171,9 +279,7 @@ export default function App() {
             const step = (data.predictedPrice - data.currentPrice) / 10; 
             for(let i = 1; i <= 10; i++) {
                predPrice += step;
-               futureData.push({
-                 time: `+${i}s`, price: null, predictedPrice: Math.round(predPrice)
-               });
+               futureData.push({ time: `+${i}s`, price: null, predictedPrice: Math.round(predPrice) });
             }
             
             return {
@@ -215,8 +321,7 @@ export default function App() {
 
   const getAiInsight = () => {
     const { price, predictedPrice, rsi } = currentAnalysis;
-    if (!price || !predictedPrice) return "AIエンジンが過去の時系列パターンから市場をディープラーニング解析中です...";
-
+    if (!price || !predictedPrice) return "AIエンジンが解析中です...";
     const diff = predictedPrice - price;
     const diffPercent = ((diff / price) * 100).toFixed(1);
 
@@ -224,11 +329,11 @@ export default function App() {
       if (diff > 0) {
         return (
           <span>
-            AIの予測モデルによれば、直近の時系列パターンから強い反発シグナルを検知しました。近日中に <strong className="text-emerald-400">¥{predictedPrice.toLocaleString()} (期待値 +{diffPercent}%)</strong> まで上昇する確率が非常に高いです。AIは<strong className="text-white">「今が買い時」</strong>と強く推奨しています。
+            AIの予測モデルによれば強い反発シグナルを検知しました。近日中に <strong className="text-emerald-400">¥{predictedPrice.toLocaleString()} (期待値 +{diffPercent}%)</strong> まで上昇する確率が非常に高いです。AIは<strong className="text-white">「今が買い時」</strong>と強く推奨しています。
           </span>
         );
       } else {
-        return "現在は下落トレンドの波形と完全に一致しています。AIはさらなる下落リスクを予測しているため、今は購入を見送るのが賢明です。";
+        return "現在は下落トレンドの波形と完全に一致しています。今は購入を見送るのが賢明です。";
       }
     } else {
       const stock = portfolio.find(s => s.ticker === selectedSellTicker);
@@ -239,13 +344,13 @@ export default function App() {
       if (diff > price * 0.005) {
         return (
           <span>
-            現在 <strong className="text-emerald-400">+¥{Math.round(currentProfit).toLocaleString()}</strong> の利益が出ています。AIの時系列予測ではまだ上昇トレンドが継続し、<strong className="text-blue-400">¥{predictedPrice.toLocaleString()}</strong> まで伸びる見込みです。利益が <strong className="text-emerald-400">約+¥{Math.round(futureProfit).toLocaleString()}</strong> に達するまでホールドを推奨します。
+            現在 <strong className="text-emerald-400">+¥{Math.round(currentProfit).toLocaleString()}</strong> の利益が出ています。AI予測ではまだ上昇トレンドが継続し、利益が <strong className="text-emerald-400">約+¥{Math.round(futureProfit).toLocaleString()}</strong> に達するまでホールドを推奨します。
           </span>
         );
       } else {
         return (
           <span>
-            天井圏の波形パターンを検知しました。AIは今後価格が下落に転じると予測しています。せっかくの利益が減ってしまう前に、<strong className="text-rose-400 border-b border-rose-400 pb-0.5">今すぐ売却して +¥{Math.round(currentProfit).toLocaleString()} の利益を確実に刈り取る</strong> ことを強く推奨します。
+            天井圏の波形パターンを検知しました。せっかくの利益が減ってしまう前に、<strong className="text-rose-400 border-b border-rose-400 pb-0.5">今すぐ売却して +¥{Math.round(currentProfit).toLocaleString()} の利益を確実に刈り取る</strong> ことを強く推奨します。
           </span>
         );
       }
@@ -270,24 +375,41 @@ export default function App() {
               <Cpu size={22} strokeWidth={2.5} />
             </div>
             <h1 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 tracking-tight">
-              TradeMaster<span className="text-blue-400">.AI</span> <span className="text-[10px] text-indigo-400 ml-1 border border-indigo-500/30 px-1.5 py-0.5 rounded">FAST ENGINE</span>
+              TradeMaster<span className="text-blue-400">.AI</span>
             </h1>
             <div className={`ml-4 px-3 py-1 hidden sm:flex items-center rounded-full border text-[10px] font-bold uppercase tracking-widest ${isConnected ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-gray-800 text-gray-500 border-gray-700'}`}>
               {isConnected ? <Wifi size={12} className="mr-1.5" /> : <WifiOff size={12} className="mr-1.5" />}
-              {isConnected ? 'API ONLINE (DB CONNECTED)' : 'API MOCK'}
+              {isConnected ? 'API ONLINE' : 'API CONNECTING...'}
             </div>
           </div>
           
-          <div className="flex bg-gray-800 p-1 rounded-xl border border-gray-700 shadow-inner">
-            <button onClick={() => setActiveTab('HOME')} className={`flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'HOME' ? 'bg-blue-500/20 text-blue-400 shadow-[0_0_10px_rgba(59,130,246,0.2)]' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'}`}>
-              <Home size={16} className="mr-2" /> <span className="hidden sm:inline">HOME (資産)</span>
-            </button>
-            <button onClick={() => { setActiveTab('BUY'); setCurrentAnalysis(prev => ({...prev, chartData: []})); }} className={`flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'BUY' ? 'bg-emerald-500/20 text-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.2)]' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'}`}>
-              <ShoppingCart size={16} className="mr-2" /> <span className="hidden sm:inline">BUY (探す)</span>
-            </button>
-            <button onClick={() => { setActiveTab('SELL'); setCurrentAnalysis(prev => ({...prev, chartData: []})); }} className={`flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'SELL' ? 'bg-rose-500/20 text-rose-400 shadow-[0_0_10px_rgba(244,63,94,0.2)]' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'}`}>
-              <Wallet size={16} className="mr-2" /> <span className="hidden sm:inline">SELL (売る)</span>
-            </button>
+          <div className="flex items-center space-x-4">
+            <div className="flex bg-gray-800 p-1 rounded-xl border border-gray-700 shadow-inner mr-2">
+              <button onClick={() => setActiveTab('HOME')} className={`flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'HOME' ? 'bg-blue-500/20 text-blue-400 shadow-[0_0_10px_rgba(59,130,246,0.2)]' : 'text-gray-400 hover:text-gray-200'}`}>
+                <Home size={16} className="mr-2" /> <span className="hidden sm:inline">HOME</span>
+              </button>
+              <button onClick={() => { setActiveTab('BUY'); setCurrentAnalysis(prev => ({...prev, chartData: []})); }} className={`flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'BUY' ? 'bg-emerald-500/20 text-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.2)]' : 'text-gray-400 hover:text-gray-200'}`}>
+                <ShoppingCart size={16} className="mr-2" /> <span className="hidden sm:inline">BUY</span>
+              </button>
+              <button onClick={() => { setActiveTab('SELL'); setCurrentAnalysis(prev => ({...prev, chartData: []})); }} className={`flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'SELL' ? 'bg-rose-500/20 text-rose-400 shadow-[0_0_10px_rgba(244,63,94,0.2)]' : 'text-gray-400 hover:text-gray-200'}`}>
+                <Wallet size={16} className="mr-2" /> <span className="hidden sm:inline">SELL</span>
+              </button>
+            </div>
+            
+            {/* ログアウトボタン */}
+            <div className="flex items-center space-x-3 border-l border-gray-700 pl-4">
+              <div className="hidden md:flex items-center text-xs text-gray-400">
+                <User size={14} className="mr-1" />
+                {userEmail.split('@')[0]}
+              </div>
+              <button 
+                onClick={onLogout} 
+                className="p-2 bg-gray-800 text-gray-400 hover:text-white rounded-lg border border-gray-700 hover:bg-gray-700 transition-colors"
+                title="ログアウト"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -323,7 +445,7 @@ export default function App() {
 
               <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg relative overflow-hidden">
                 <div className="absolute -right-4 -bottom-4 opacity-10 text-indigo-500"><Target size={100} /></div>
-                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">取引回数 (DB記録)</p>
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">取引回数</p>
                 <h3 className="text-3xl font-black text-indigo-400 font-mono mt-1">{tradeHistory.length} 回</h3>
               </div>
             </div>
@@ -391,14 +513,14 @@ export default function App() {
 
             <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-lg">
               <p className="text-sm text-gray-200 font-bold uppercase tracking-wider mb-4 flex items-center">
-                <History size={18} className="mr-2 text-indigo-400" /> 本物の取引履歴 (DB記録)
+                <History size={18} className="mr-2 text-indigo-400" /> あなたの取引履歴
               </p>
               <div className="space-y-2">
                 {tradeHistory.length === 0 && <p className="text-gray-500 text-sm">取引履歴はまだありません。</p>}
                 {tradeHistory.map((trade, i) => (
                   <div key={i} className="flex justify-between items-center p-3 bg-gray-900/50 rounded-lg border border-gray-700/50">
                     <div className="flex items-center space-x-4">
-                      <span className="text-xs text-gray-500 w-24">{trade.date}</span>
+                      <span className="text-xs text-gray-500 w-24">{new Date(trade.created_at || trade.date).toLocaleString('ja-JP', {month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit'})}</span>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
                         trade.action === 'SELL' ? 'bg-blue-500/10 text-blue-400 border-blue-500/30' : 
                         trade.action === 'BUY' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 
