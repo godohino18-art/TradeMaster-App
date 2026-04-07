@@ -72,7 +72,7 @@ def get_user_wallet(db: Session, user_id: str):
 # ==========================================
 # 2. FastAPI 初期化
 # ==========================================
-app = FastAPI(title="TradeMaster.AI API v3.1 (Real Chart)")
+app = FastAPI(title="TradeMaster.AI API v3.2 (Speed Up)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 TARGET_TICKERS = {
@@ -87,8 +87,13 @@ def send_discord_notification(message):
     except Exception as e: print(f"通知エラー: {e}")
 
 # ==========================================
-# 3. AIエンジン & 本物チャート抽出
+# 3. AIエンジン & 本物チャート抽出 (キャッシュ爆速化)
 # ==========================================
+
+# ★追加：AIの計算結果を一時的に記憶する「キャッシュ」
+ANALYSIS_CACHE = {}
+CACHE_DURATION = 60 * 3 # 3分間（180秒）記憶する
+
 def fetch_stock_data(ticker, period="5d", interval="5m"): 
     stock = yf.Ticker(ticker)
     df = stock.history(period=period, interval=interval)
@@ -116,6 +121,14 @@ def predict_with_rf(df, future_steps=3):
     return float(model.predict(df[features].values[-1].reshape(1, -1))[0])
 
 def analyze_single_ticker(ticker, name):
+    current_time = time.time()
+    
+    # ★追加：キャッシュがあれば、重い計算をスキップして即座に返す！
+    if ticker in ANALYSIS_CACHE:
+        cached_data, cached_time = ANALYSIS_CACHE[ticker]
+        if current_time - cached_time < CACHE_DURATION:
+            return cached_data
+            
     try:
         df = fetch_stock_data(ticker, period="1d", interval="5m")
         if df is None or df.empty: return None
@@ -129,7 +142,6 @@ def analyze_single_ticker(ticker, name):
             action = "CALL"
             confidence = min(99, int(diff_percent * 8000))
 
-        # ★追加：本物のチャート波形データを抽出（直近の約40件分）
         recent_df = df.tail(40)
         chart_data = []
         for idx, row in recent_df.iterrows():
@@ -140,12 +152,17 @@ def analyze_single_ticker(ticker, name):
                 "predictedPrice": None
             })
 
-        return {
+        result = {
             "ticker": ticker, "name": name, "currentPrice": round(current_price, 1),
             "predictedPrice": round(prediction, 1), "action": action, "confidence": confidence,
             "indicators": {"rsi": round(float(df['RSI'].iloc[-1]), 1)},
-            "chartData": chart_data # ★リアルな波形をフロントエンドへ送る
+            "chartData": chart_data
         }
+        
+        # ★追加：計算が終わったらキャッシュに記憶させる
+        ANALYSIS_CACHE[ticker] = (result, current_time)
+        
+        return result
     except Exception as e: return None
 
 def background_monitoring():
