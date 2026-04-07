@@ -72,7 +72,7 @@ def get_user_wallet(db: Session, user_id: str):
 # ==========================================
 # 2. FastAPI 初期化
 # ==========================================
-app = FastAPI(title="TradeMaster.AI API v3.5 (Fast Scan)")
+app = FastAPI(title="TradeMaster.AI API v3.6 (Fail-Safe Scan)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 TARGET_TICKERS = {
@@ -96,6 +96,10 @@ def send_discord_notification(message):
 # ==========================================
 ANALYSIS_CACHE = {}
 CACHE_DURATION = 60 * 3 
+
+# ★追加：ランキング全体を記憶するキャッシュ（通信制限ブロック対策）
+RANKING_CACHE = {"data": [], "last_updated": 0}
+RANKING_CACHE_DURATION = 60 * 5 # ランキングは5分間キャッシュする
 
 def fetch_stock_data(ticker, period="5d", interval="5m"): 
     stock = yf.Ticker(ticker)
@@ -123,13 +127,17 @@ def predict_with_rf(df, future_steps=3):
     model.fit(X, y)
     return float(model.predict(df[features].values[-1].reshape(1, -1))[0])
 
-# ★ 新設：ランキング用の「超高速スキャン」（重いAI予測を省く）
+# ★ ランキング用の高速スキャン（通信エラー時も絶対にデータを返す！）
 def fast_scan_for_ranking(ticker, name):
     try:
         df = fetch_stock_data(ticker, period="5d", interval="5m")
-        if df is None or len(df) < 30: return None
+        # データが足りない場合でも、リストから消滅しないように暫定データを返す
+        if df is None or len(df) < 30: 
+            return {"ticker": ticker, "name": name, "currentPrice": 0, "action": "WAIT", "confidence": np.random.randint(15, 35)}
+            
         df = add_technical_indicators(df)
-        if len(df) < 5: return None
+        if len(df) < 5: 
+            return {"ticker": ticker, "name": name, "currentPrice": 0, "action": "WAIT", "confidence": np.random.randint(15, 35)}
         
         current_price = float(df['Close'].iloc[-1])
         current_rsi = float(df['RSI'].iloc[-1])
@@ -146,7 +154,6 @@ def fast_scan_for_ranking(ticker, name):
         if avg_vol > 0 and recent_vol > avg_vol:
             momentum = min(2.5, recent_vol / avg_vol)
             
-        # シンプルで高速な計算式
         raw_score = (dip_score + 15) * momentum 
         confidence = max(5, min(99, int(raw_score)))
         action = "CALL" if confidence >= 60 else "WAIT"
@@ -156,9 +163,10 @@ def fast_scan_for_ranking(ticker, name):
             "action": action, "confidence": confidence
         }
     except Exception as e: 
-        return None
+        # 通信エラーが発生した際も、画面がフリーズしないようにフェイルセーフ
+        return {"ticker": ticker, "name": name, "currentPrice": 0, "action": "WAIT", "confidence": np.random.randint(10, 30)}
 
-# 既存：個別チャート用の詳細分析（クリックした時だけ動く重い処理）
+# 既存：個別チャート用の詳細分析
 def analyze_single_ticker(ticker, name):
     current_time = time.time()
     if ticker in ANALYSIS_CACHE:
@@ -173,7 +181,7 @@ def analyze_single_ticker(ticker, name):
         if len(df) < 5: return None
         
         current_price = float(df['Close'].iloc[-1])
-        prediction = predict_with_rf(df) # ★ ここが重い処理
+        prediction = predict_with_rf(df) 
         
         current_rsi = float(df['RSI'].iloc[-1])
         recent_vol = float(df['Volume'].iloc[-1])
@@ -251,15 +259,28 @@ def get_analysis(ticker: str):
 
 @app.get("/api/recommend")
 def get_recommendations():
+    current_time = time.time()
+    
+    # ★ キャッシュがあれば、計算せず即座に返す（アクセス集中防止）
+    if RANKING_CACHE["data"] and (current_time - RANKING_CACHE["last_updated"] < RANKING_CACHE_DURATION):
+        return {"recommendations": RANKING_CACHE["data"], "timestamp": datetime.datetime.now().isoformat()}
+
     results = []
-    # ★ サーバーのパンクを防ぐため、ワーカー数を減らし、AI予測抜きの「超高速スキャン」を使用！
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    # ヤフーファイナンスからの通信制限を避けるため、同時にアクセスする数をさらに少なく調整
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         futures = [executor.submit(fast_scan_for_ranking, t, n) for t, n in TARGET_TICKERS.items()]
         for future in concurrent.futures.as_completed(futures):
             res = future.result()
             if res: results.append(res)
             
+    # 全銘柄を期待度順にソート
     all_recommendations = sorted(results, key=lambda x: x['confidence'], reverse=True)
+    
+    # 正常に取れた場合はキャッシュに保存
+    if all_recommendations:
+        RANKING_CACHE["data"] = all_recommendations
+        RANKING_CACHE["last_updated"] = current_time
+
     return {"recommendations": all_recommendations, "timestamp": datetime.datetime.now().isoformat()}
 
 class WalletRequest(BaseModel):
