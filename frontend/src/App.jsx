@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Line, PieChart, Pie, Cell } from 'recharts';
-import { Crosshair, Cpu, Star, ToggleLeft, ToggleRight, Wifi, WifiOff, PlayCircle, Wallet, AlertCircle, ShoppingCart, ArrowDownToLine, Home, DollarSign, PieChart as PieChartIcon, History, TrendingUp, TrendingDown, Target, ArrowRight, LogOut, User } from 'lucide-react';
+import { Crosshair, Cpu, Star, ToggleLeft, ToggleRight, Wifi, WifiOff, PlayCircle, Wallet, AlertCircle, ShoppingCart, ArrowDownToLine, Home, DollarSign, PieChart as PieChartIcon, History, TrendingUp, TrendingDown, Target, ArrowRight, LogOut, User, PlusCircle, MinusCircle } from 'lucide-react';
 
 // ==========================================
-// 1. Supabase 接続設定 (APIを直接呼び出す方式に変更し、プレビューエラーを回避)
+// 1. Supabase 接続設定 (ビルドエラー回避の直接通信版)
 // ==========================================
 const supabaseUrl = 'https://ezasvrijqcpgroyaayxf.supabase.co';
 const supabaseAnonKey = 'sb_publishable_YHWVqLqCJjrQt0UJUgFF_w_AncjEZ2j';
+const API_BASE_URL = 'https://trademaster-backend-7ulm.onrender.com';
 
 const generateMockChart = (basePrice) => {
   const data = [];
@@ -22,7 +23,6 @@ const generateMockChart = (basePrice) => {
 };
 
 const COLORS = ['#34d399', '#3b82f6', '#8b5cf6', '#f59e0b', '#ec4899'];
-const API_BASE_URL = 'https://trademaster-backend-7ulm.onrender.com';
 
 // ==========================================
 // 2. ログイン画面コンポーネント
@@ -40,7 +40,6 @@ function AuthScreen({ onAuthSuccess }) {
     setErrorMsg('');
     try {
       if (isLoginMode) {
-        // 標準のfetchを使ってSupabaseの認証APIと直接通信
         const res = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
           method: 'POST',
           headers: { 'apikey': supabaseAnonKey, 'Content-Type': 'application/json' },
@@ -60,11 +59,8 @@ function AuthScreen({ onAuthSuccess }) {
         alert('🎉 登録成功！ログインしてください。');
         setIsLoginMode(true);
       }
-    } catch (error) {
-      setErrorMsg(error.message);
-    } finally {
-      setLoading(false);
-    }
+    } catch (error) { setErrorMsg(error.message); } 
+    finally { setLoading(false); }
   };
 
   return (
@@ -79,46 +75,22 @@ function AuthScreen({ onAuthSuccess }) {
           </h1>
           <p className="text-gray-400 text-sm mt-2 font-bold uppercase tracking-widest">Multi-User Platform</p>
         </div>
-
-        {errorMsg && (
-          <div className="bg-rose-500/10 border border-rose-500/30 text-rose-400 p-3 rounded-lg mb-6 text-sm">
-            {errorMsg}
-          </div>
-        )}
-
+        {errorMsg && <div className="bg-rose-500/10 border border-rose-500/30 text-rose-400 p-3 rounded-lg mb-6 text-sm">{errorMsg}</div>}
         <form onSubmit={handleAuth} className="space-y-5">
           <div>
             <label className="block text-sm font-bold text-gray-400 mb-1">Email</label>
-            <input 
-              type="email" required
-              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-              value={email} onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-            />
+            <input type="email" required className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 transition-all" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
           </div>
           <div>
             <label className="block text-sm font-bold text-gray-400 mb-1">Password</label>
-            <input 
-              type="password" required minLength="6"
-              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-              value={password} onChange={(e) => setPassword(e.target.value)}
-              placeholder="6文字以上"
-            />
+            <input type="password" required minLength="6" className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 transition-all" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="6文字以上" />
           </div>
-
-          <button 
-            type="submit" disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg shadow-blue-500/30 transition-all disabled:opacity-50 mt-4"
-          >
+          <button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg shadow-blue-500/30 transition-all disabled:opacity-50 mt-4">
             {loading ? '処理中...' : isLoginMode ? 'ログイン' : '新規アカウント登録'}
           </button>
         </form>
-
         <div className="mt-6 text-center">
-          <button 
-            onClick={() => { setIsLoginMode(!isLoginMode); setErrorMsg(''); }}
-            className="text-sm text-gray-400 hover:text-white transition-colors underline"
-          >
+          <button onClick={() => { setIsLoginMode(!isLoginMode); setErrorMsg(''); }} className="text-sm text-gray-400 hover:text-white transition-colors underline">
             {isLoginMode ? 'アカウントをお持ちでない方はこちら (新規登録)' : 'すでにアカウントをお持ちの方はこちら (ログイン)'}
           </button>
         </div>
@@ -128,7 +100,7 @@ function AuthScreen({ onAuthSuccess }) {
 }
 
 // ==========================================
-// 3. メインアプリ (ログイン状態の管理)
+// 3. メインアプリ
 // ==========================================
 export default function App() {
   const [session, setSession] = useState(() => {
@@ -152,7 +124,7 @@ export default function App() {
 }
 
 // ==========================================
-// 4. メイン画面のUIとロジック
+// 4. メイン画面のUIとロジック (フルバージョン)
 // ==========================================
 function MainApp({ session, onLogout }) {
   const userId = session.user.id; 
@@ -164,6 +136,7 @@ function MainApp({ session, onLogout }) {
   
   const [selectedBuyTicker, setSelectedBuyTicker] = useState('7203.T');
   const [buyTickerName, setBuyTickerName] = useState('トヨタ自動車');
+  const [buyShares, setBuyShares] = useState(100); // ★ 追加：購入株数
   
   const [selectedSellTicker, setSelectedSellTicker] = useState('');
   const [autoSell, setAutoSell] = useState(false);
@@ -174,7 +147,7 @@ function MainApp({ session, onLogout }) {
 
   const [portfolio, setPortfolio] = useState([]);
   const [tradeHistory, setTradeHistory] = useState([]);
-  const [cash, setCash] = useState(3000000); 
+  const [cash, setCash] = useState(0); // ★ 追加：実際の現金残高
 
   const fetchPortfolioFromDB = async () => {
     try {
@@ -183,56 +156,69 @@ function MainApp({ session, onLogout }) {
         const data = await res.json();
         setPortfolio(data.portfolio.map(p => ({ ...p, currentPrice: p.avgPrice })));
         setTradeHistory(data.history);
+        setCash(data.cash); // ★ 現金残高をセット
         if (data.portfolio.length > 0 && !data.portfolio.find(p => p.ticker === selectedSellTicker)) {
           setSelectedSellTicker(data.portfolio[0].ticker);
         }
-      } else {
-        throw new Error("API Response not OK");
       }
-    } catch (e) { 
-      console.warn("DB接続エラー"); 
-    }
+    } catch (e) { console.warn("DB接続エラー"); }
   };
 
-  useEffect(() => {
-    fetchPortfolioFromDB();
-  }, [userId]);
+  useEffect(() => { fetchPortfolioFromDB(); }, [userId]);
 
+  // ★ 入出金処理
+  const handleWallet = async (type, amount) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/wallet/${type}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, amount })
+      });
+      if (res.ok) {
+        fetchPortfolioFromDB();
+      } else {
+        const err = await res.json();
+        alert(`エラー: ${err.detail}`);
+      }
+    } catch (e) { alert("通信エラーが発生しました。"); }
+  };
+
+  // ★ 購入処理 (株数を送信)
   const executeBuy = async (ticker, name) => {
-    if (!window.confirm(`${name} を100株購入しますか？`)) return;
+    if (!window.confirm(`${name} を ${buyShares}株 購入しますか？\n(概算: ¥${Math.round(currentAnalysis.price * buyShares).toLocaleString()})`)) return;
     try {
       const res = await fetch(`${API_BASE_URL}/api/portfolio/buy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticker, shares: 100, user_id: userId }) 
+        body: JSON.stringify({ ticker, shares: buyShares, user_id: userId }) 
       });
       if (res.ok) {
-        alert('🎉 購入が完了しました！HOME画面のポートフォリオに追加されています。');
+        alert('🎉 購入が完了しました！ポートフォリオに追加され、残高が更新されました。');
         fetchPortfolioFromDB();
       } else {
-        throw new Error("Network Error");
+        const err = await res.json();
+        alert(`エラー: ${err.detail}`);
       }
     } catch (e) { alert("エラーが発生しました。"); }
   };
 
+  // ★ 売却処理
   const executeSell = async (id, name, isAuto = false) => {
     if (!isAuto && !window.confirm(`${name} を売却して利益を確定させますか？`)) return;
     try {
       const res = await fetch(`${API_BASE_URL}/api/portfolio/sell/${id}?user_id=${userId}`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
-        if (isAuto) {
-          console.log(`[AUTO SELL発動] ${name} を自動売却しました。利益: ¥${Math.round(data.profit).toLocaleString()}`);
-        } else {
-          alert(`💸 売却完了！\n利益: ¥${Math.round(data.profit).toLocaleString()} を獲得しました！`);
-        }
+        if (!isAuto) alert(`💸 売却完了！\n利益: ¥${Math.round(data.profit).toLocaleString()} を獲得し、口座に入金されました！`);
         fetchPortfolioFromDB();
       } else {
-        throw new Error("Network Error");
+        const err = await res.json();
+        alert(`エラー: ${err.detail}`);
       }
     } catch (e) { alert("エラーが発生しました。"); }
   };
 
+  // ★ AIおすすめの取得
   useEffect(() => {
     const fetchRecommendations = async () => {
       try {
@@ -248,9 +234,9 @@ function MainApp({ session, onLogout }) {
     return () => clearInterval(int);
   }, []);
 
+  // ★ 個別銘柄の分析とリアルタイム更新
   useEffect(() => {
     if (activeTab === 'HOME') return;
-
     const activeTicker = activeTab === 'BUY' ? selectedBuyTicker : selectedSellTicker;
     if (!activeTicker) return;
     
@@ -320,18 +306,14 @@ function MainApp({ session, onLogout }) {
   }, [selectedBuyTicker, selectedSellTicker, activeTab, autoSell]);
 
   const getAiInsight = () => {
-    const { price, predictedPrice, rsi } = currentAnalysis;
+    const { price, predictedPrice } = currentAnalysis;
     if (!price || !predictedPrice) return "AIエンジンが解析中です...";
     const diff = predictedPrice - price;
     const diffPercent = ((diff / price) * 100).toFixed(1);
 
     if (activeTab === 'BUY') {
       if (diff > 0) {
-        return (
-          <span>
-            AIの予測モデルによれば強い反発シグナルを検知しました。近日中に <strong className="text-emerald-400">¥{predictedPrice.toLocaleString()} (期待値 +{diffPercent}%)</strong> まで上昇する確率が非常に高いです。AIは<strong className="text-white">「今が買い時」</strong>と強く推奨しています。
-          </span>
-        );
+        return <span>AIの予測モデルによれば強い反発シグナルを検知しました。近日中に <strong className="text-emerald-400">¥{predictedPrice.toLocaleString()} (期待値 +{diffPercent}%)</strong> まで上昇する確率が非常に高いです。AIは<strong className="text-white">「今が買い時」</strong>と強く推奨しています。</span>;
       } else {
         return "現在は下落トレンドの波形と完全に一致しています。今は購入を見送るのが賢明です。";
       }
@@ -342,29 +324,22 @@ function MainApp({ session, onLogout }) {
       const futureProfit = (predictedPrice - stock.avgPrice) * stock.shares;
 
       if (diff > price * 0.005) {
-        return (
-          <span>
-            現在 <strong className="text-emerald-400">+¥{Math.round(currentProfit).toLocaleString()}</strong> の利益が出ています。AI予測ではまだ上昇トレンドが継続し、利益が <strong className="text-emerald-400">約+¥{Math.round(futureProfit).toLocaleString()}</strong> に達するまでホールドを推奨します。
-          </span>
-        );
+        return <span>現在 <strong className="text-emerald-400">+¥{Math.round(currentProfit).toLocaleString()}</strong> の利益が出ています。AI予測ではまだ上昇トレンドが継続し、利益が <strong className="text-emerald-400">約+¥{Math.round(futureProfit).toLocaleString()}</strong> に達するまでホールドを推奨します。</span>;
       } else {
-        return (
-          <span>
-            天井圏の波形パターンを検知しました。せっかくの利益が減ってしまう前に、<strong className="text-rose-400 border-b border-rose-400 pb-0.5">今すぐ売却して +¥{Math.round(currentProfit).toLocaleString()} の利益を確実に刈り取る</strong> ことを強く推奨します。
-          </span>
-        );
+        return <span>天井圏の波形パターンを検知しました。せっかくの利益が減ってしまう前に、<strong className="text-rose-400 border-b border-rose-400 pb-0.5">今すぐ売却して +¥{Math.round(currentProfit).toLocaleString()} の利益を確実に刈り取る</strong> ことを強く推奨します。</span>;
       }
     }
   };
 
+  // 資産計算
   const totalStockValue = portfolio.reduce((acc, stock) => acc + (stock.currentPrice * stock.shares), 0);
   const realizedProfit = tradeHistory.reduce((acc, trade) => acc + (trade.profit || 0), 0);
-  const totalAssets = cash + realizedProfit + totalStockValue;
+  const totalAssets = cash + totalStockValue; // 現金 + 株の評価額
   const unrealizedProfit = portfolio.reduce((acc, stock) => acc + ((stock.currentPrice - stock.avgPrice) * stock.shares), 0);
   
   const pieData = portfolio.map(stock => ({
     name: stock.name, value: stock.currentPrice * stock.shares
-  })).concat([{ name: '現金（買付余力）', value: cash + realizedProfit }]);
+  })).concat([{ name: '現金（買付余力）', value: cash }]);
 
   return (
     <div className="min-h-screen bg-gray-900 font-sans text-gray-100 selection:bg-blue-500/30" translate="no">
@@ -396,17 +371,12 @@ function MainApp({ session, onLogout }) {
               </button>
             </div>
             
-            {/* ログアウトボタン */}
             <div className="flex items-center space-x-3 border-l border-gray-700 pl-4">
               <div className="hidden md:flex items-center text-xs text-gray-400">
                 <User size={14} className="mr-1" />
                 {userEmail.split('@')[0]}
               </div>
-              <button 
-                onClick={onLogout} 
-                className="p-2 bg-gray-800 text-gray-400 hover:text-white rounded-lg border border-gray-700 hover:bg-gray-700 transition-colors"
-                title="ログアウト"
-              >
+              <button onClick={onLogout} className="p-2 bg-gray-800 text-gray-400 hover:text-white rounded-lg border border-gray-700 hover:bg-gray-700 transition-colors" title="ログアウト">
                 <LogOut size={16} />
               </button>
             </div>
@@ -420,11 +390,23 @@ function MainApp({ session, onLogout }) {
         {activeTab === 'HOME' && (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg relative overflow-hidden">
+              
+              {/* 現金残高 & 入出金パネル */}
+              <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg relative overflow-hidden flex flex-col justify-between">
                 <div className="absolute -right-4 -bottom-4 opacity-10"><DollarSign size={100} /></div>
-                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">現在の総資産</p>
-                <h3 className="text-3xl font-black text-white font-mono mt-1">¥{Math.round(totalAssets).toLocaleString()}</h3>
-                <p className="text-xs text-gray-400 mt-2">買付余力: ¥{Math.round(cash + realizedProfit).toLocaleString()}</p>
+                <div>
+                  <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">現金残高 (買付余力)</p>
+                  <h3 className="text-3xl font-black text-white font-mono mt-1">¥{Math.round(cash).toLocaleString()}</h3>
+                  <p className="text-xs text-gray-500 mt-1">総資産: ¥{Math.round(totalAssets).toLocaleString()}</p>
+                </div>
+                <div className="flex space-x-2 mt-4 relative z-10">
+                  <button onClick={() => handleWallet('deposit', 100000)} className="flex-1 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-600/30 py-2 rounded-lg text-[10px] font-bold flex items-center justify-center transition-all">
+                    <PlusCircle size={14} className="mr-1" /> 10万円入金
+                  </button>
+                  <button onClick={() => handleWallet('withdraw', 100000)} className="flex-1 bg-rose-600/20 hover:bg-rose-600/40 text-rose-400 border border-rose-600/30 py-2 rounded-lg text-[10px] font-bold flex items-center justify-center transition-all">
+                    <MinusCircle size={14} className="mr-1" /> 10万円出金
+                  </button>
+                </div>
               </div>
               
               <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg relative overflow-hidden">
@@ -582,13 +564,22 @@ function MainApp({ session, onLogout }) {
                       <span className="text-5xl font-black text-white font-mono">¥{currentAnalysis.price ? Math.round(currentAnalysis.price).toLocaleString() : '---'}</span>
                     </div>
                   </div>
-                  <button 
-                    onClick={() => executeBuy(selectedBuyTicker, buyTickerName)}
-                    className="flex items-center px-8 py-4 bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 rounded-xl font-bold text-lg transition-all transform hover:scale-105"
-                  >
-                    <PlayCircle size={22} className="mr-2" />
-                    この株を買う (100株)
-                  </button>
+                  
+                  {/* 株数選択と購入ボタン */}
+                  <div className="flex flex-col items-end">
+                    <div className="flex items-center space-x-2 mb-3 bg-gray-900 p-1 rounded-lg border border-gray-700">
+                      {[10, 100, 500, 1000].map(n => (
+                        <button key={n} onClick={() => setBuyShares(n)} className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${buyShares === n ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-400 hover:text-white'}`}>
+                          {n}株
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={() => executeBuy(selectedBuyTicker, buyTickerName)} className="flex items-center px-8 py-3 bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 rounded-xl font-bold text-lg transition-all transform hover:scale-105">
+                      <PlayCircle size={22} className="mr-2" />
+                      この株を買う ({buyShares}株)
+                    </button>
+                    <p className="text-xs text-gray-400 mt-2 font-mono">概算代金: ¥{Math.round(currentAnalysis.price * buyShares).toLocaleString()}</p>
+                  </div>
                 </div>
 
                 <div className="bg-indigo-500/10 border border-indigo-500/30 p-5 rounded-xl mb-6 flex items-start">
@@ -681,12 +672,9 @@ function MainApp({ session, onLogout }) {
                             {autoSell ? <ToggleRight className="text-indigo-400" size={20} /> : <ToggleLeft className="text-gray-600" size={20} />}
                           </div>
                           
-                          <button 
-                            onClick={() => executeSell(stock.id, stock.name)}
-                            className="flex items-center px-8 py-3 bg-rose-500 hover:bg-rose-600 text-white shadow-lg shadow-rose-500/20 rounded-xl font-bold transition-all"
-                          >
+                          <button onClick={() => executeSell(stock.id, stock.name)} className="flex items-center px-8 py-3 bg-rose-500 hover:bg-rose-600 text-white shadow-lg shadow-rose-500/20 rounded-xl font-bold transition-all">
                             <ArrowDownToLine size={20} className="mr-2" />
-                            今すぐ売る (利確)
+                            今すぐ全株売る (利確)
                           </button>
                         </div>
                       </React.Fragment>

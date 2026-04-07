@@ -17,7 +17,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 # ==========================================
 # 設定：Discord Webhook URL
 # ==========================================
-DISCORD_WEBHOOK_URL = "[https://discord.com/api/webhooks/1489169956129214496/axw4OI8cP43aHkrUootqZ828vqa2w9krDOBQyZybg9tdQHxxmzbuoUQG5kZQ4-aA3iNk](https://discord.com/api/webhooks/1489169956129214496/axw4OI8cP43aHkrUootqZ828vqa2w9krDOBQyZybg9tdQHxxmzbuoUQG5kZQ4-aA3iNk)"
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1489169956129214496/axw4OI8cP43aHkrUootqZ828vqa2w9krDOBQyZybg9tdQHxxmzbuoUQG5kZQ4-aA3iNk"
 
 # ==========================================
 # 1. データベース設定 (Supabase クラウドDB)
@@ -28,11 +28,16 @@ engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# マルチユーザー化に伴い、テーブル名を_v2にして新しく作成します（カラム追加エラー回避のため）
+# ユーザーごとの「現金残高」を管理する銀行テーブル
+class UserWallet(Base):
+    __tablename__ = "user_wallet_v1"
+    user_id = Column(String, primary_key=True, index=True)
+    balance = Column(Float, default=3000000.0) 
+
 class PortfolioItem(Base):
     __tablename__ = "portfolio_v2"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, index=True) # ★追加：誰の株か
+    user_id = Column(String, index=True)
     ticker = Column(String, index=True)
     name = Column(String)
     shares = Column(Integer)
@@ -42,7 +47,7 @@ class PortfolioItem(Base):
 class TradeHistory(Base):
     __tablename__ = "trade_history_v2"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, index=True) # ★追加：誰の取引か
+    user_id = Column(String, index=True)
     action = Column(String) 
     ticker = Column(String)
     name = Column(String)
@@ -56,10 +61,19 @@ def get_db():
     try: yield db
     finally: db.close()
 
+def get_user_wallet(db: Session, user_id: str):
+    wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
+    if not wallet:
+        wallet = UserWallet(user_id=user_id, balance=3000000.0)
+        db.add(wallet)
+        db.commit()
+        db.refresh(wallet)
+    return wallet
+
 # ==========================================
 # 2. FastAPI 初期化
 # ==========================================
-app = FastAPI(title="TradeMaster.AI API v2.0 (Multi-User)")
+app = FastAPI(title="TradeMaster.AI API v3.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 TARGET_TICKERS = {
@@ -122,11 +136,7 @@ def analyze_single_ticker(ticker, name):
         }
     except Exception as e: return None
 
-# ==========================================
-# 4. バックグラウンド監視
-# ==========================================
 def background_monitoring():
-    print("バックグラウンド監視スレッド開始...")
     while True:
         time.sleep(60) 
         try:
@@ -168,12 +178,30 @@ def get_recommendations():
             res = future.result()
             if res: results.append(res)
     call_recommendations = sorted([r for r in results if r['action'] == 'CALL'], key=lambda x: x['confidence'], reverse=True)
-    if call_recommendations and call_recommendations[0]['confidence'] > 80:
-        best = call_recommendations[0]
-        send_discord_notification(f"🚀 **【買いシグナル発生】**\n『{best['name']}』に強い上昇トレンドが発生しています。(期待度: {best['confidence']}%)")
     return {"recommendations": call_recommendations, "timestamp": datetime.datetime.now().isoformat()}
 
-# ★ 買いリクエストに user_id を追加
+class WalletRequest(BaseModel):
+    user_id: str
+    amount: float
+
+@app.post("/api/wallet/deposit")
+def deposit_cash(req: WalletRequest, db: Session = Depends(get_db)):
+    wallet = get_user_wallet(db, req.user_id)
+    wallet.balance += req.amount
+    db.commit()
+    send_discord_notification(f"🏧 ユーザーが入金しました。額: ¥{int(req.amount):,} (残高: ¥{int(wallet.balance):,})")
+    return {"status": "success", "balance": wallet.balance}
+
+@app.post("/api/wallet/withdraw")
+def withdraw_cash(req: WalletRequest, db: Session = Depends(get_db)):
+    wallet = get_user_wallet(db, req.user_id)
+    if wallet.balance < req.amount:
+        raise HTTPException(status_code=400, detail="残高不足です。")
+    wallet.balance -= req.amount
+    db.commit()
+    send_discord_notification(f"🏧 ユーザーが出金しました。額: ¥{int(req.amount):,} (残高: ¥{int(wallet.balance):,})")
+    return {"status": "success", "balance": wallet.balance}
+
 class BuyRequest(BaseModel):
     ticker: str
     shares: int
@@ -184,28 +212,33 @@ def buy_stock(req: BuyRequest, db: Session = Depends(get_db)):
     name = TARGET_TICKERS.get(req.ticker, req.ticker)
     df = fetch_stock_data(req.ticker, period="1d")
     current_price = float(df['Close'].iloc[-1]) if df is not None else 0
+    total_cost = current_price * req.shares
 
-    # ★ 誰が買ったかを保存
+    wallet = get_user_wallet(db, req.user_id)
+    if wallet.balance < total_cost:
+        raise HTTPException(status_code=400, detail="残高不足です。")
+
+    wallet.balance -= total_cost
     new_item = PortfolioItem(ticker=req.ticker, name=name, shares=req.shares, avg_price=current_price, user_id=req.user_id)
     db.add(new_item)
     history = TradeHistory(action="BUY", ticker=req.ticker, name=name, profit=0, user_id=req.user_id)
     db.add(history)
     db.commit()
     
-    send_discord_notification(f"🛒 ユーザーが『{name}』を {req.shares}株 購入しました。(買値: {current_price}円)")
+    send_discord_notification(f"🛒 購入: {name} ({req.shares}株) ¥{int(total_cost):,}")
     return {"status": "success"}
 
-# ★ GETの時に user_id を受け取り、その人だけのデータを返す
 @app.get("/api/portfolio")
 def get_portfolio(user_id: str, db: Session = Depends(get_db)):
+    wallet = get_user_wallet(db, user_id)
     items = db.query(PortfolioItem).filter(PortfolioItem.user_id == user_id).all()
     history = db.query(TradeHistory).filter(TradeHistory.user_id == user_id).order_by(TradeHistory.created_at.desc()).limit(10).all()
     return {
+        "cash": wallet.balance,
         "portfolio": [{"id": i.id, "ticker": i.ticker, "name": i.name, "shares": i.shares, "avgPrice": i.avg_price} for i in items],
         "history": [{"date": h.created_at.strftime("%m/%d %H:%M"), "action": h.action, "name": h.name, "profit": h.profit} for h in history]
     }
 
-# ★ 売却時に user_id を受け取り、本人の株か確認して売却
 @app.post("/api/portfolio/sell/{item_id}")
 def sell_stock(item_id: int, user_id: str, db: Session = Depends(get_db)):
     item = db.query(PortfolioItem).filter(PortfolioItem.id == item_id, PortfolioItem.user_id == user_id).first()
@@ -214,13 +247,17 @@ def sell_stock(item_id: int, user_id: str, db: Session = Depends(get_db)):
     df = fetch_stock_data(item.ticker, period="1d", interval="5m")
     current_price = float(df['Close'].iloc[-1]) if df is not None else item.avg_price
     profit = (current_price - item.avg_price) * item.shares
+    total_revenue = current_price * item.shares
+
+    wallet = get_user_wallet(db, user_id)
+    wallet.balance += total_revenue
     
     history = TradeHistory(action="SELL", ticker=item.ticker, name=item.name, profit=profit, user_id=user_id)
     db.add(history)
     db.delete(item)
     db.commit()
     
-    send_discord_notification(f"💰 **【利益確定】** ユーザーが『{item.name}』を売却し、**＋{int(profit):,}円** の利益を獲得しました！")
+    send_discord_notification(f"💰 利確: {item.name} (+¥{int(profit):,})")
     return {"status": "success", "profit": profit}
 
 if __name__ == "__main__":
