@@ -33,14 +33,13 @@ class UserWallet(Base):
     user_id = Column(String, primary_key=True, index=True)
     balance = Column(Float, default=3000000.0) 
 
-# ★ 100円などの少額投資（小数点株数）に対応するため、テーブルを「v3」に進化
 class PortfolioItem(Base):
     __tablename__ = "portfolio_v3"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(String, index=True)
     ticker = Column(String, index=True)
     name = Column(String)
-    shares = Column(Float) # ★ Integer(整数)からFloat(小数)に変更！
+    shares = Column(Float) 
     avg_price = Column(Float)
     purchased_at = Column(DateTime, default=datetime.datetime.utcnow)
 
@@ -73,10 +72,9 @@ def get_user_wallet(db: Session, user_id: str):
 # ==========================================
 # 2. FastAPI 初期化
 # ==========================================
-app = FastAPI(title="TradeMaster.AI API v3.4 (Pro AI & Micro Investment)")
+app = FastAPI(title="TradeMaster.AI API v3.5 (Fast Scan)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# ★ 監視銘柄を大幅に拡大！（ボラティリティが高いもの中心）
 TARGET_TICKERS = {
     "8306.T": "三菱UFJ", "8316.T": "三井住友", "8411.T": "みずほ",
     "7203.T": "トヨタ自動車", "7267.T": "ホンダ", "7269.T": "スズキ",
@@ -94,7 +92,7 @@ def send_discord_notification(message):
     except Exception as e: print(f"通知エラー: {e}")
 
 # ==========================================
-# 3. AIエンジン & 本物チャート抽出
+# 3. テクニカル指標 ＆ AIエンジン
 # ==========================================
 ANALYSIS_CACHE = {}
 CACHE_DURATION = 60 * 3 
@@ -125,6 +123,42 @@ def predict_with_rf(df, future_steps=3):
     model.fit(X, y)
     return float(model.predict(df[features].values[-1].reshape(1, -1))[0])
 
+# ★ 新設：ランキング用の「超高速スキャン」（重いAI予測を省く）
+def fast_scan_for_ranking(ticker, name):
+    try:
+        df = fetch_stock_data(ticker, period="5d", interval="5m")
+        if df is None or len(df) < 30: return None
+        df = add_technical_indicators(df)
+        if len(df) < 5: return None
+        
+        current_price = float(df['Close'].iloc[-1])
+        current_rsi = float(df['RSI'].iloc[-1])
+        recent_vol = float(df['Volume'].iloc[-1])
+        avg_vol = float(df['Volume'].tail(20).mean())
+        
+        # 1. 押し目買いスコア（下がっているほど高得点）
+        dip_score = 0
+        if current_rsi < 50:
+            dip_score = (50 - current_rsi) * 2.0
+            
+        # 2. 出来高ブースト（投資家の勢い）
+        momentum = 1.0
+        if avg_vol > 0 and recent_vol > avg_vol:
+            momentum = min(2.5, recent_vol / avg_vol)
+            
+        # シンプルで高速な計算式
+        raw_score = (dip_score + 15) * momentum 
+        confidence = max(5, min(99, int(raw_score)))
+        action = "CALL" if confidence >= 60 else "WAIT"
+
+        return {
+            "ticker": ticker, "name": name, "currentPrice": round(current_price, 1),
+            "action": action, "confidence": confidence
+        }
+    except Exception as e: 
+        return None
+
+# 既存：個別チャート用の詳細分析（クリックした時だけ動く重い処理）
 def analyze_single_ticker(ticker, name):
     current_time = time.time()
     if ticker in ANALYSIS_CACHE:
@@ -133,35 +167,29 @@ def analyze_single_ticker(ticker, name):
             return cached_data
             
     try:
-        # ★ エラー回避のため 5d に戻して十分なデータを確保
         df = fetch_stock_data(ticker, period="5d", interval="5m")
         if df is None or len(df) < 30: return None
         df = add_technical_indicators(df)
         if len(df) < 5: return None
         
         current_price = float(df['Close'].iloc[-1])
-        prediction = predict_with_rf(df)
+        prediction = predict_with_rf(df) # ★ ここが重い処理
         
-        # ★ プロの視点：RSIと出来高をより重視する
         current_rsi = float(df['RSI'].iloc[-1])
         recent_vol = float(df['Volume'].iloc[-1])
         avg_vol = float(df['Volume'].tail(20).mean())
         
-        # 1. 押し目買いスコア（RSIが40以下なら強いプラス評価）
         dip_score = 0
         if current_rsi < 40:
             dip_score = (40 - current_rsi) * 2.0
             
-        # 2. 出来高ブースト（投資家の勢い）
         momentum = 1.0
         if avg_vol > 0 and recent_vol > avg_vol:
             momentum = min(2.0, recent_vol / avg_vol)
             
-        # 3. AI予測上昇率
         diff_percent = (prediction - current_price) / current_price
         ai_growth = diff_percent * 5000 
         
-        # 下落タイミング＆出来高でスコアが跳ねる計算式
         raw_score = (ai_growth + dip_score + 10) * momentum 
         confidence = max(5, min(99, int(raw_score)))
         
@@ -224,13 +252,13 @@ def get_analysis(ticker: str):
 @app.get("/api/recommend")
 def get_recommendations():
     results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(analyze_single_ticker, t, n) for t, n in TARGET_TICKERS.items()]
+    # ★ サーバーのパンクを防ぐため、ワーカー数を減らし、AI予測抜きの「超高速スキャン」を使用！
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(fast_scan_for_ranking, t, n) for t, n in TARGET_TICKERS.items()]
         for future in concurrent.futures.as_completed(futures):
             res = future.result()
             if res: results.append(res)
             
-    # 全銘柄を期待度順にソートして返す
     all_recommendations = sorted(results, key=lambda x: x['confidence'], reverse=True)
     return {"recommendations": all_recommendations, "timestamp": datetime.datetime.now().isoformat()}
 
@@ -256,7 +284,6 @@ def withdraw_cash(req: WalletRequest, db: Session = Depends(get_db)):
     send_discord_notification(f"🏧 ユーザーが出金しました。額: ¥{int(req.amount):,} (残高: ¥{int(wallet.balance):,})")
     return {"status": "success", "balance": wallet.balance}
 
-# ★ 100円などの小数点投資に対応するため float に変更
 class BuyRequest(BaseModel):
     ticker: str
     shares: float 
