@@ -2,30 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Line, PieChart, Pie, Cell } from 'recharts';
 import { Crosshair, Cpu, Star, ToggleLeft, ToggleRight, Wifi, WifiOff, PlayCircle, Wallet, AlertCircle, ShoppingCart, ArrowDownToLine, Home, DollarSign, PieChart as PieChartIcon, History, TrendingUp, TrendingDown, Target, ArrowRight, LogOut, User, PlusCircle, MinusCircle } from 'lucide-react';
 
-// ==========================================
-// 1. Supabase 接続設定 (ビルドエラー回避の直接通信版)
-// ==========================================
 const supabaseUrl = 'https://ezasvrijqcpgroyaayxf.supabase.co';
 const supabaseAnonKey = 'sb_publishable_YHWVqLqCJjrQt0UJUgFF_w_AncjEZ2j';
 const API_BASE_URL = 'https://trademaster-backend-7ulm.onrender.com';
 
-const generateMockChart = (basePrice) => {
-  const data = [];
-  let price = basePrice;
-  for (let i = 0; i < 40; i++) {
-    price = price + (Math.random() - 0.45) * (basePrice * 0.005);
-    data.push({ 
-      time: `${9 + Math.floor(i/12)}:${(i%12)*5 < 10 ? '0' : ''}${(i%12)*5}`, 
-      price: Math.round(price), predictedPrice: null
-    });
-  }
-  return data;
-};
-
 const COLORS = ['#34d399', '#3b82f6', '#8b5cf6', '#f59e0b', '#ec4899'];
 
 // ==========================================
-// 2. ログイン画面コンポーネント
+// ログイン画面コンポーネント
 // ==========================================
 function AuthScreen({ onAuthSuccess }) {
   const [email, setEmail] = useState('');
@@ -100,7 +84,7 @@ function AuthScreen({ onAuthSuccess }) {
 }
 
 // ==========================================
-// 3. メインアプリ
+// メインアプリ
 // ==========================================
 export default function App() {
   const [session, setSession] = useState(() => {
@@ -124,7 +108,7 @@ export default function App() {
 }
 
 // ==========================================
-// 4. メイン画面のUIとロジック (フルバージョン)
+// メイン画面のUIとロジック
 // ==========================================
 function MainApp({ session, onLogout }) {
   const userId = session.user.id; 
@@ -136,7 +120,7 @@ function MainApp({ session, onLogout }) {
   
   const [selectedBuyTicker, setSelectedBuyTicker] = useState('7203.T');
   const [buyTickerName, setBuyTickerName] = useState('トヨタ自動車');
-  const [buyShares, setBuyShares] = useState(100); // ★ 追加：購入株数
+  const [buyShares, setBuyShares] = useState(100);
   
   const [selectedSellTicker, setSelectedSellTicker] = useState('');
   const [autoSell, setAutoSell] = useState(false);
@@ -147,7 +131,7 @@ function MainApp({ session, onLogout }) {
 
   const [portfolio, setPortfolio] = useState([]);
   const [tradeHistory, setTradeHistory] = useState([]);
-  const [cash, setCash] = useState(0); // ★ 追加：実際の現金残高
+  const [cash, setCash] = useState(0);
 
   const fetchPortfolioFromDB = async () => {
     try {
@@ -156,7 +140,7 @@ function MainApp({ session, onLogout }) {
         const data = await res.json();
         setPortfolio(data.portfolio.map(p => ({ ...p, currentPrice: p.avgPrice })));
         setTradeHistory(data.history);
-        setCash(data.cash); // ★ 現金残高をセット
+        setCash(data.cash || 0);
         if (data.portfolio.length > 0 && !data.portfolio.find(p => p.ticker === selectedSellTicker)) {
           setSelectedSellTicker(data.portfolio[0].ticker);
         }
@@ -166,7 +150,6 @@ function MainApp({ session, onLogout }) {
 
   useEffect(() => { fetchPortfolioFromDB(); }, [userId]);
 
-  // ★ 入出金処理
   const handleWallet = async (type, amount) => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/wallet/${type}`, {
@@ -183,7 +166,6 @@ function MainApp({ session, onLogout }) {
     } catch (e) { alert("通信エラーが発生しました。"); }
   };
 
-  // ★ 購入処理 (株数を送信)
   const executeBuy = async (ticker, name) => {
     if (!window.confirm(`${name} を ${buyShares}株 購入しますか？\n(概算: ¥${Math.round(currentAnalysis.price * buyShares).toLocaleString()})`)) return;
     try {
@@ -202,7 +184,6 @@ function MainApp({ session, onLogout }) {
     } catch (e) { alert("エラーが発生しました。"); }
   };
 
-  // ★ 売却処理
   const executeSell = async (id, name, isAuto = false) => {
     if (!isAuto && !window.confirm(`${name} を売却して利益を確定させますか？`)) return;
     try {
@@ -218,7 +199,6 @@ function MainApp({ session, onLogout }) {
     } catch (e) { alert("エラーが発生しました。"); }
   };
 
-  // ★ AIおすすめの取得
   useEffect(() => {
     const fetchRecommendations = async () => {
       try {
@@ -234,7 +214,7 @@ function MainApp({ session, onLogout }) {
     return () => clearInterval(int);
   }, []);
 
-  // ★ 個別銘柄の分析とリアルタイム更新
+  // ★ 【本物のチャートを描画する処理】
   useEffect(() => {
     if (activeTab === 'HOME') return;
     const activeTicker = activeTab === 'BUY' ? selectedBuyTicker : selectedSellTicker;
@@ -248,24 +228,20 @@ function MainApp({ session, onLogout }) {
           setIsConnected(true);
           
           setCurrentAnalysis(prev => {
-            const baseChart = prev.chartData.length > 0 && prev.chartData[prev.chartData.length-1].price !== null 
-                              ? prev.chartData : generateMockChart(data.currentPrice);
+            // ★ Pythonから送られてきた本物の波形データを受け取る
+            const actualData = data.chartData || [];
             
-            const actualData = baseChart.filter(d => d.price !== null);
-            actualData.shift();
-            const time = new Date(data.timestamp);
-            actualData.push({ 
-              time: `${time.getHours()}:${time.getMinutes()}:${time.getSeconds()}`, 
-              price: data.currentPrice, predictedPrice: null
-            });
-
+            // 未来の予測線を点線でつなぐ処理
             const futureData = [...actualData];
             let predPrice = data.currentPrice;
-            futureData[futureData.length - 1].predictedPrice = data.currentPrice;
+            if(futureData.length > 0) {
+                // 最後の実際のデータ点から予測線を開始する
+                futureData[futureData.length - 1].predictedPrice = data.currentPrice;
+            }
             const step = (data.predictedPrice - data.currentPrice) / 10; 
             for(let i = 1; i <= 10; i++) {
                predPrice += step;
-               futureData.push({ time: `+${i}s`, price: null, predictedPrice: Math.round(predPrice) });
+               futureData.push({ time: `+${i * 5}m`, price: null, predictedPrice: Math.round(predPrice) });
             }
             
             return {
@@ -286,7 +262,6 @@ function MainApp({ session, onLogout }) {
               } else {
                 newPrice = newPrice * (1 + (Math.random() - 0.5) * 0.002);
               }
-
               if (autoSell) {
                 const profitPct = (newPrice - stock.avgPrice) / stock.avgPrice;
                 if (profitPct >= 0.015) {
@@ -331,15 +306,15 @@ function MainApp({ session, onLogout }) {
     }
   };
 
-  // 資産計算
+  const safeCash = cash || 0;
   const totalStockValue = portfolio.reduce((acc, stock) => acc + (stock.currentPrice * stock.shares), 0);
   const realizedProfit = tradeHistory.reduce((acc, trade) => acc + (trade.profit || 0), 0);
-  const totalAssets = cash + totalStockValue; // 現金 + 株の評価額
+  const totalAssets = safeCash + totalStockValue;
   const unrealizedProfit = portfolio.reduce((acc, stock) => acc + ((stock.currentPrice - stock.avgPrice) * stock.shares), 0);
   
   const pieData = portfolio.map(stock => ({
     name: stock.name, value: stock.currentPrice * stock.shares
-  })).concat([{ name: '現金（買付余力）', value: cash }]);
+  })).concat([{ name: '現金（買付余力）', value: safeCash }]);
 
   return (
     <div className="min-h-screen bg-gray-900 font-sans text-gray-100 selection:bg-blue-500/30" translate="no">
@@ -396,7 +371,7 @@ function MainApp({ session, onLogout }) {
                 <div className="absolute -right-4 -bottom-4 opacity-10"><DollarSign size={100} /></div>
                 <div>
                   <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">現金残高 (買付余力)</p>
-                  <h3 className="text-3xl font-black text-white font-mono mt-1">¥{Math.round(cash).toLocaleString()}</h3>
+                  <h3 className="text-3xl font-black text-white font-mono mt-1">¥{Math.round(safeCash).toLocaleString()}</h3>
                   <p className="text-xs text-gray-500 mt-1">総資産: ¥{Math.round(totalAssets).toLocaleString()}</p>
                 </div>
                 <div className="flex space-x-2 mt-4 relative z-10">
