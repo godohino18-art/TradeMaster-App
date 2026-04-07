@@ -120,7 +120,9 @@ function MainApp({ session, onLogout }) {
   
   const [selectedBuyTicker, setSelectedBuyTicker] = useState('7203.T');
   const [buyTickerName, setBuyTickerName] = useState('トヨタ自動車');
-  const [buyShares, setBuyShares] = useState(100);
+  
+  // ★ 購入モードを「株数」から「金額」に変更
+  const [buyAmount, setBuyAmount] = useState(1000); 
   
   const [selectedSellTicker, setSelectedSellTicker] = useState('');
   const [autoSell, setAutoSell] = useState(false);
@@ -166,13 +168,20 @@ function MainApp({ session, onLogout }) {
     } catch (e) { alert("通信エラーが発生しました。"); }
   };
 
+  // ★ 金額指定での購入処理 (端株計算)
   const executeBuy = async (ticker, name) => {
-    if (!window.confirm(`${name} を ${buyShares}株 購入しますか？\n(概算: ¥${Math.round(currentAnalysis.price * buyShares).toLocaleString()})`)) return;
+    if (!currentAnalysis.price) return alert("株価データを取得中です...");
+    
+    // 金額から買える株数（小数）を計算
+    const sharesToBuy = buyAmount / currentAnalysis.price;
+    
+    if (!window.confirm(`${name} を ¥${buyAmount.toLocaleString()} 分購入しますか？\n(約 ${sharesToBuy.toFixed(4)} 株)`)) return;
+    
     try {
       const res = await fetch(`${API_BASE_URL}/api/portfolio/buy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticker, shares: buyShares, user_id: userId }) 
+        body: JSON.stringify({ ticker, shares: sharesToBuy, user_id: userId }) 
       });
       if (res.ok) {
         alert('🎉 購入が完了しました！ポートフォリオに追加され、残高が更新されました。');
@@ -205,6 +214,7 @@ function MainApp({ session, onLogout }) {
         const res = await fetch(`${API_BASE_URL}/api/recommend`);
         if (res.ok) {
           const data = await res.json();
+          // ★ 修正：確実に10社リストを表示する
           setRecommendations(data.recommendations.slice(0, 10));
         }
       } catch (e) {}
@@ -214,7 +224,6 @@ function MainApp({ session, onLogout }) {
     return () => clearInterval(int);
   }, []);
 
-  // ★ 【本物のチャートを描画する処理】
   useEffect(() => {
     if (activeTab === 'HOME') return;
     const activeTicker = activeTab === 'BUY' ? selectedBuyTicker : selectedSellTicker;
@@ -228,14 +237,10 @@ function MainApp({ session, onLogout }) {
           setIsConnected(true);
           
           setCurrentAnalysis(prev => {
-            // ★ Pythonから送られてきた本物の波形データを受け取る
             const actualData = data.chartData || [];
-            
-            // 未来の予測線を点線でつなぐ処理
             const futureData = [...actualData];
             let predPrice = data.currentPrice;
             if(futureData.length > 0) {
-                // 最後の実際のデータ点から予測線を開始する
                 futureData[futureData.length - 1].predictedPrice = data.currentPrice;
             }
             const step = (data.predictedPrice - data.currentPrice) / 10; 
@@ -281,16 +286,16 @@ function MainApp({ session, onLogout }) {
   }, [selectedBuyTicker, selectedSellTicker, activeTab, autoSell]);
 
   const getAiInsight = () => {
-    const { price, predictedPrice } = currentAnalysis;
-    if (!price || !predictedPrice) return "AIエンジンが解析中です...";
+    const { price, predictedPrice, rsi } = currentAnalysis;
+    if (!price || !predictedPrice) return "AIエンジンが市場を解析中です...";
     const diff = predictedPrice - price;
     const diffPercent = ((diff / price) * 100).toFixed(1);
 
     if (activeTab === 'BUY') {
       if (diff > 0) {
-        return <span>AIの予測モデルによれば強い反発シグナルを検知しました。近日中に <strong className="text-emerald-400">¥{predictedPrice.toLocaleString()} (期待値 +{diffPercent}%)</strong> まで上昇する確率が非常に高いです。AIは<strong className="text-white">「今が買い時」</strong>と強く推奨しています。</span>;
+        return <span>AIの予測モデルによれば、現在のRSI({rsi})から判断して強い反発シグナルを検知しました。近日中に <strong className="text-emerald-400">¥{predictedPrice.toLocaleString()} (期待値 +{diffPercent}%)</strong> まで上昇する確率が非常に高いです。AIは<strong className="text-white">「今が買い時」</strong>と強く推奨しています。</span>;
       } else {
-        return "現在は下落トレンドの波形と完全に一致しています。今は購入を見送るのが賢明です。";
+        return "現在は下落トレンドの波形と完全に一致しています。投資家の勢いも弱いため、今は購入を見送るのが賢明です。";
       }
     } else {
       const stock = portfolio.find(s => s.ticker === selectedSellTicker);
@@ -375,11 +380,11 @@ function MainApp({ session, onLogout }) {
                   <p className="text-xs text-gray-500 mt-1">総資産: ¥{Math.round(totalAssets).toLocaleString()}</p>
                 </div>
                 <div className="flex space-x-2 mt-4 relative z-10">
-                  <button onClick={() => handleWallet('deposit', 100000)} className="flex-1 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-600/30 py-2 rounded-lg text-[10px] font-bold flex items-center justify-center transition-all">
-                    <PlusCircle size={14} className="mr-1" /> 10万円入金
+                  <button onClick={() => handleWallet('deposit', 10000)} className="flex-1 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-600/30 py-2 rounded-lg text-[10px] font-bold flex items-center justify-center transition-all">
+                    <PlusCircle size={14} className="mr-1" /> 1万円入金
                   </button>
-                  <button onClick={() => handleWallet('withdraw', 100000)} className="flex-1 bg-rose-600/20 hover:bg-rose-600/40 text-rose-400 border border-rose-600/30 py-2 rounded-lg text-[10px] font-bold flex items-center justify-center transition-all">
-                    <MinusCircle size={14} className="mr-1" /> 10万円出金
+                  <button onClick={() => handleWallet('withdraw', 10000)} className="flex-1 bg-rose-600/20 hover:bg-rose-600/40 text-rose-400 border border-rose-600/30 py-2 rounded-lg text-[10px] font-bold flex items-center justify-center transition-all">
+                    <MinusCircle size={14} className="mr-1" /> 1万円出金
                   </button>
                 </div>
               </div>
@@ -435,8 +440,8 @@ function MainApp({ session, onLogout }) {
                     <thead className="text-xs text-gray-500 border-b border-gray-700">
                       <tr>
                         <th className="pb-3 font-normal">銘柄</th>
-                        <th className="pb-3 font-normal text-right">保有数</th>
-                        <th className="pb-3 font-normal text-right">買値</th>
+                        <th className="pb-3 font-normal text-right">保有数(株)</th>
+                        <th className="pb-3 font-normal text-right">平均買値</th>
                         <th className="pb-3 font-normal text-right">現在値</th>
                         <th className="pb-3 font-normal text-right">評価損益</th>
                       </tr>
@@ -452,7 +457,8 @@ function MainApp({ session, onLogout }) {
                               <p className="font-bold text-sm text-gray-200">{stock.name}</p>
                               <p className="text-[10px] text-gray-500 font-mono">{stock.ticker}</p>
                             </td>
-                            <td className="py-3 text-right text-sm font-mono text-gray-300">{stock.shares}</td>
+                            {/* ★ 小数点表示対応 */}
+                            <td className="py-3 text-right text-sm font-mono text-gray-300">{stock.shares.toFixed(4)}</td>
                             <td className="py-3 text-right text-sm font-mono text-gray-300">¥{stock.avgPrice.toLocaleString()}</td>
                             <td className="py-3 text-right text-sm font-mono text-gray-300">¥{Math.round(stock.currentPrice).toLocaleString()}</td>
                             <td className={`py-3 text-right text-sm font-mono font-bold ${profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -492,7 +498,7 @@ function MainApp({ session, onLogout }) {
                         {trade.profit > 0 ? '+' : ''}¥{Math.round(trade.profit).toLocaleString()}
                       </span>
                     ) : (
-                      <span className="text-sm font-mono text-gray-500">決済待ち</span>
+                      <span className="text-sm font-mono text-gray-500">決済完了</span>
                     )}
                   </div>
                 ))}
@@ -540,27 +546,32 @@ function MainApp({ session, onLogout }) {
                     </div>
                   </div>
                   
-                  {/* 株数選択と購入ボタン */}
+                  {/* ★ 株数ではなく、投資金額を選択するUIに変更！ */}
                   <div className="flex flex-col items-end">
                     <div className="flex items-center space-x-2 mb-3 bg-gray-900 p-1 rounded-lg border border-gray-700">
-                      {[10, 100, 500, 1000].map(n => (
-                        <button key={n} onClick={() => setBuyShares(n)} className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${buyShares === n ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-400 hover:text-white'}`}>
-                          {n}株
+                      <span className="text-xs text-gray-400 pl-2">投資額:</span>
+                      {[100, 1000, 5000, 10000].map(amount => (
+                        <button key={amount} onClick={() => setBuyAmount(amount)} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${buyAmount === amount ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-400 hover:text-white'}`}>
+                          ¥{amount.toLocaleString()}
                         </button>
                       ))}
                     </div>
                     <button onClick={() => executeBuy(selectedBuyTicker, buyTickerName)} className="flex items-center px-8 py-3 bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 rounded-xl font-bold text-lg transition-all transform hover:scale-105">
                       <PlayCircle size={22} className="mr-2" />
-                      この株を買う ({buyShares}株)
+                      この株を ¥{buyAmount.toLocaleString()} 分 買う
                     </button>
-                    <p className="text-xs text-gray-400 mt-2 font-mono">概算代金: ¥{Math.round(currentAnalysis.price * buyShares).toLocaleString()}</p>
+                    {currentAnalysis.price > 0 && (
+                      <p className="text-xs text-gray-400 mt-2 font-mono">
+                        (概算取得株数: 約 {(buyAmount / currentAnalysis.price).toFixed(4)} 株)
+                      </p>
+                    )}
                   </div>
                 </div>
 
                 <div className="bg-indigo-500/10 border border-indigo-500/30 p-5 rounded-xl mb-6 flex items-start">
                   <Cpu className="text-indigo-400 mt-1 mr-4 flex-shrink-0" size={24} />
                   <div>
-                    <h3 className="text-indigo-400 font-bold mb-1">AI 買い時予測アドバイス</h3>
+                    <h3 className="text-indigo-400 font-bold mb-1">LSTM 買い時予測アドバイス</h3>
                     <p className="text-gray-300 text-sm leading-relaxed">{getAiInsight()}</p>
                   </div>
                 </div>
@@ -606,7 +617,7 @@ function MainApp({ session, onLogout }) {
                       >
                         <div className="flex justify-between items-start mb-1">
                           <p className="text-sm font-bold text-gray-200">{stock.name}</p>
-                          <p className="text-[10px] text-gray-500">{stock.shares}株</p>
+                          <p className="text-[10px] text-gray-500">{stock.shares.toFixed(4)}株</p>
                         </div>
                         <div className="flex justify-between items-end mt-2">
                           <span className="text-xs text-gray-400 font-mono">買値 ¥{stock.avgPrice}</span>
@@ -649,7 +660,7 @@ function MainApp({ session, onLogout }) {
                           
                           <button onClick={() => executeSell(stock.id, stock.name)} className="flex items-center px-8 py-3 bg-rose-500 hover:bg-rose-600 text-white shadow-lg shadow-rose-500/20 rounded-xl font-bold transition-all">
                             <ArrowDownToLine size={20} className="mr-2" />
-                            今すぐ全株売る (利確)
+                            今すぐ全額売る (利確)
                           </button>
                         </div>
                       </React.Fragment>
@@ -661,7 +672,7 @@ function MainApp({ session, onLogout }) {
                 <div className={`border p-5 rounded-xl mb-6 flex items-start ${currentAnalysis.predictedPrice < currentAnalysis.price ? 'bg-rose-500/10 border-rose-500/30' : 'bg-indigo-500/10 border-indigo-500/30'}`}>
                   <AlertCircle className={`mt-1 mr-4 flex-shrink-0 ${currentAnalysis.predictedPrice < currentAnalysis.price ? 'text-rose-400' : 'text-indigo-400'}`} size={24} />
                   <div>
-                    <h3 className={`font-bold mb-1 ${currentAnalysis.predictedPrice < currentAnalysis.price ? 'text-rose-400' : 'text-indigo-400'}`}>AI 売却タイミング予測</h3>
+                    <h3 className={`font-bold mb-1 ${currentAnalysis.predictedPrice < currentAnalysis.price ? 'text-rose-400' : 'text-indigo-400'}`}>LSTM 売却タイミング予測</h3>
                     <p className="text-gray-300 text-sm leading-relaxed">{getAiInsight()}</p>
                   </div>
                 </div>
