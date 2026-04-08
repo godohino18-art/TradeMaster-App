@@ -4,6 +4,7 @@ import { Crosshair, Cpu, Star, ToggleLeft, ToggleRight, Wifi, WifiOff, PlayCircl
 
 const supabaseUrl = 'https://ezasvrijqcpgroyaayxf.supabase.co';
 const supabaseAnonKey = 'sb_publishable_YHWVqLqCJjrQt0UJUgFF_w_AncjEZ2j';
+// ★ ここがRenderのURLになっていることが超重要です！
 const API_BASE_URL = 'https://trademaster-backend-7ulm.onrender.com';
 
 const COLORS = ['#34d399', '#3b82f6', '#8b5cf6', '#f59e0b', '#ec4899'];
@@ -121,7 +122,6 @@ function MainApp({ session, onLogout }) {
   const [selectedBuyTicker, setSelectedBuyTicker] = useState('7203.T');
   const [buyTickerName, setBuyTickerName] = useState('トヨタ自動車');
   
-  // ★ 購入モードを「株数」から「金額」に変更
   const [buyAmount, setBuyAmount] = useState(1000); 
   
   const [selectedSellTicker, setSelectedSellTicker] = useState('');
@@ -168,11 +168,9 @@ function MainApp({ session, onLogout }) {
     } catch (e) { alert("通信エラーが発生しました。"); }
   };
 
-  // ★ 金額指定での購入処理 (端株計算)
   const executeBuy = async (ticker, name) => {
     if (!currentAnalysis.price) return alert("株価データを取得中です...");
     
-    // 金額から買える株数（小数）を計算
     const sharesToBuy = buyAmount / currentAnalysis.price;
     
     if (!window.confirm(`${name} を ¥${buyAmount.toLocaleString()} 分購入しますか？\n(約 ${sharesToBuy.toFixed(4)} 株)`)) return;
@@ -214,7 +212,6 @@ function MainApp({ session, onLogout }) {
         const res = await fetch(`${API_BASE_URL}/api/recommend`);
         if (res.ok) {
           const data = await res.json();
-          // ★ 修正：確実に10社リストを表示する
           setRecommendations(data.recommendations.slice(0, 10));
         }
       } catch (e) {}
@@ -371,7 +368,6 @@ function MainApp({ session, onLogout }) {
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               
-              {/* 現金残高 & 入出金パネル */}
               <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg relative overflow-hidden flex flex-col justify-between">
                 <div className="absolute -right-4 -bottom-4 opacity-10"><DollarSign size={100} /></div>
                 <div>
@@ -457,7 +453,6 @@ function MainApp({ session, onLogout }) {
                               <p className="font-bold text-sm text-gray-200">{stock.name}</p>
                               <p className="text-[10px] text-gray-500 font-mono">{stock.ticker}</p>
                             </td>
-                            {/* ★ 小数点表示対応 */}
                             <td className="py-3 text-right text-sm font-mono text-gray-300">{stock.shares.toFixed(4)}</td>
                             <td className="py-3 text-right text-sm font-mono text-gray-300">¥{stock.avgPrice.toLocaleString()}</td>
                             <td className="py-3 text-right text-sm font-mono text-gray-300">¥{Math.round(stock.currentPrice).toLocaleString()}</td>
@@ -546,7 +541,6 @@ function MainApp({ session, onLogout }) {
                     </div>
                   </div>
                   
-                  {/* ★ 株数ではなく、投資金額を選択するUIに変更！ */}
                   <div className="flex flex-col items-end">
                     <div className="flex items-center space-x-2 mb-3 bg-gray-900 p-1 rounded-lg border border-gray-700">
                       <span className="text-xs text-gray-400 pl-2">投資額:</span>
