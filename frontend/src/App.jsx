@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Line, PieChart, Pie, Cell } from 'recharts';
-import { Crosshair, Cpu, Star, ToggleLeft, ToggleRight, Wifi, WifiOff, PlayCircle, Wallet, AlertCircle, ShoppingCart, ArrowDownToLine, Home, DollarSign, PieChart as PieChartIcon, History, TrendingUp, TrendingDown, Target, ArrowRight, LogOut, User, PlusCircle, MinusCircle } from 'lucide-react';
+import { Crosshair, Cpu, Star, ToggleLeft, ToggleRight, Wifi, WifiOff, PlayCircle, Wallet, AlertCircle, ShoppingCart, ArrowDownToLine, Home, DollarSign, PieChart as PieChartIcon, History, TrendingUp, TrendingDown, Target, ArrowRight, LogOut, User, PlusCircle, MinusCircle, Loader } from 'lucide-react';
 
 const supabaseUrl = 'https://ezasvrijqcpgroyaayxf.supabase.co';
 const supabaseAnonKey = 'sb_publishable_YHWVqLqCJjrQt0UJUgFF_w_AncjEZ2j';
-// ★ ここがRenderのURLになっていることが超重要です！
 const API_BASE_URL = 'https://trademaster-backend-7ulm.onrender.com';
 
 const COLORS = ['#34d399', '#3b82f6', '#8b5cf6', '#f59e0b', '#ec4899'];
@@ -117,6 +116,7 @@ function MainApp({ session, onLogout }) {
 
   const [activeTab, setActiveTab] = useState('HOME');
   const [isConnected, setIsConnected] = useState(false);
+  const [isServerWaking, setIsServerWaking] = useState(false); // ★ サーバー起動中判定
   const [recommendations, setRecommendations] = useState([]);
   
   const [selectedBuyTicker, setSelectedBuyTicker] = useState('7203.T');
@@ -134,6 +134,14 @@ function MainApp({ session, onLogout }) {
   const [portfolio, setPortfolio] = useState([]);
   const [tradeHistory, setTradeHistory] = useState([]);
   const [cash, setCash] = useState(0);
+
+  // ★ 接続が遅い場合「サーバー起動中」に切り替える
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!isConnected) setIsServerWaking(true);
+    }, 5000); // 5秒経っても繋がらなければ「起動中」表示
+    return () => clearTimeout(timer);
+  }, [isConnected]);
 
   const fetchPortfolioFromDB = async () => {
     try {
@@ -213,6 +221,8 @@ function MainApp({ session, onLogout }) {
         if (res.ok) {
           const data = await res.json();
           setRecommendations(data.recommendations.slice(0, 10));
+          setIsConnected(true); // ★ ランキングが取れたらオンライン判定
+          setIsServerWaking(false);
         }
       } catch (e) {}
     };
@@ -232,6 +242,7 @@ function MainApp({ session, onLogout }) {
         if (response.ok) {
           const data = await response.json();
           setIsConnected(true);
+          setIsServerWaking(false);
           
           setCurrentAnalysis(prev => {
             const actualData = data.chartData || [];
@@ -274,7 +285,9 @@ function MainApp({ session, onLogout }) {
             });
           });
         }
-      } catch (error) { setIsConnected(false); }
+      } catch (error) { 
+        // setIsConnected(false); // コメントアウトしてパカパカ点滅を防ぐ
+      }
     };
 
     fetchApiData();
@@ -283,6 +296,7 @@ function MainApp({ session, onLogout }) {
   }, [selectedBuyTicker, selectedSellTicker, activeTab, autoSell]);
 
   const getAiInsight = () => {
+    if (!isConnected && isServerWaking) return "サーバーを起動中です。データを受信するまでしばらくお待ちください...";
     const { price, predictedPrice, rsi } = currentAnalysis;
     if (!price || !predictedPrice) return "AIエンジンが市場を解析中です...";
     const diff = predictedPrice - price;
@@ -329,9 +343,10 @@ function MainApp({ session, onLogout }) {
             <h1 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 tracking-tight">
               TradeMaster<span className="text-blue-400">.AI</span>
             </h1>
-            <div className={`ml-4 px-3 py-1 hidden sm:flex items-center rounded-full border text-[10px] font-bold uppercase tracking-widest ${isConnected ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-gray-800 text-gray-500 border-gray-700'}`}>
-              {isConnected ? <Wifi size={12} className="mr-1.5" /> : <WifiOff size={12} className="mr-1.5" />}
-              {isConnected ? 'API ONLINE' : 'API CONNECTING...'}
+            {/* ★ サーバーの起動状態をわかりやすく色分け */}
+            <div className={`ml-4 px-3 py-1 hidden sm:flex items-center rounded-full border text-[10px] font-bold uppercase tracking-widest transition-colors ${isConnected ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : isServerWaking ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : 'bg-gray-800 text-gray-500 border-gray-700'}`}>
+              {isConnected ? <Wifi size={12} className="mr-1.5" /> : isServerWaking ? <Loader size={12} className="mr-1.5 animate-spin" /> : <WifiOff size={12} className="mr-1.5" />}
+              {isConnected ? 'API ONLINE' : isServerWaking ? 'SERVER WAKING UP...' : 'API CONNECTING...'}
             </div>
           </div>
           
@@ -506,11 +521,18 @@ function MainApp({ session, onLogout }) {
         {activeTab === 'BUY' && (
           <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="xl:col-span-1 space-y-4">
-              <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg flex flex-col h-[650px]">
+              <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg flex flex-col h-[650px] relative">
                 <p className="text-sm text-emerald-400 font-bold uppercase tracking-wider mb-2 flex items-center">
                   <Star size={16} className="mr-1.5 fill-emerald-400" /> AI厳選 買い時トップ10
                 </p>
                 <div className="overflow-y-auto pr-2 space-y-2 flex-grow scrollbar-thin scrollbar-thumb-gray-700">
+                  {/* ★ サーバー起動中の表示 */}
+                  {!isConnected && isServerWaking && recommendations.length === 0 && (
+                    <div className="flex flex-col items-center justify-center h-full opacity-70">
+                      <Loader className="text-amber-400 animate-spin mb-3" size={24} />
+                      <p className="text-amber-400 font-bold text-xs text-center leading-relaxed">サーバーを起動しています...<br/>(約1〜2分かかります)</p>
+                    </div>
+                  )}
                   {recommendations.length > 0 ? recommendations.map((rec, idx) => (
                     <div 
                       key={idx} onClick={() => { setSelectedBuyTicker(rec.ticker); setBuyTickerName(rec.name); }}
@@ -524,7 +546,7 @@ function MainApp({ session, onLogout }) {
                         <p className="text-[11px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">期待度 {rec.confidence}%</p>
                       </div>
                     </div>
-                  )) : <div className="text-gray-500 text-xs text-center py-10">AIスキャン中...</div>}
+                  )) : !isServerWaking && <div className="text-gray-500 text-xs text-center py-10">AIスキャン中...</div>}
                 </div>
               </div>
             </div>
@@ -571,6 +593,14 @@ function MainApp({ session, onLogout }) {
                 </div>
 
                 <div className="h-[350px] w-full relative">
+                  {/* ★ サーバー起動中のチャート目隠しUI */}
+                  {!isConnected && isServerWaking && (
+                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-700">
+                      <Cpu className="text-amber-400 animate-pulse mb-3" size={32} />
+                      <p className="text-amber-400 font-bold text-sm">AIエンジン・サーバーを起動しています...</p>
+                      <p className="text-gray-400 text-xs mt-2">（※無料サーバーの仕様により、初回のみ約1〜2分かかります）</p>
+                    </div>
+                  )}
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={currentAnalysis.chartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" />
@@ -672,6 +702,12 @@ function MainApp({ session, onLogout }) {
                 </div>
 
                 <div className="h-[300px] w-full relative">
+                  {!isConnected && isServerWaking && (
+                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-700">
+                      <Cpu className="text-amber-400 animate-pulse mb-3" size={32} />
+                      <p className="text-amber-400 font-bold text-sm">AIエンジン・サーバーを起動しています...</p>
+                    </div>
+                  )}
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={currentAnalysis.chartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" />
