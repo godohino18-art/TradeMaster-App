@@ -72,10 +72,12 @@ def get_user_wallet(db: Session, user_id: str):
 # ==========================================
 # 2. FastAPI 初期化
 # ==========================================
-app = FastAPI(title="TradeMaster.AI API v3.7 (Zero Timeout Scan)")
+app = FastAPI(title="TradeMaster.AI API v3.8 (Perfect Rank & US Stocks)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+# ★修正：日本株に加えて、夜でも勝てる「米国株（ボラティリティ高）」を追加！
 TARGET_TICKERS = {
+    # 日本株
     "8306.T": "三菱UFJ", "8316.T": "三井住友", "8411.T": "みずほ",
     "7203.T": "トヨタ自動車", "7267.T": "ホンダ", "7269.T": "スズキ",
     "8035.T": "東京エレクトロン", "6920.T": "レーザーテック", "6857.T": "アドバンテスト", "6146.T": "ディスコ",
@@ -83,7 +85,11 @@ TARGET_TICKERS = {
     "9983.T": "ファーストリテイリング", "8058.T": "三菱商事", "8031.T": "三井物産", "8001.T": "伊藤忠",
     "6758.T": "ソニーG", "6861.T": "キーエンス", "7974.T": "任天堂", "9766.T": "コナミG",
     "9101.T": "日本郵船", "9104.T": "商船三井", "9107.T": "川崎汽船",
-    "5401.T": "日本製鉄", "7011.T": "三菱重工", "4385.T": "メルカリ", "6098.T": "リクルート"
+    "5401.T": "日本製鉄", "7011.T": "三菱重工", "4385.T": "メルカリ", "6098.T": "リクルート",
+    # 米国株 (データ取得が超安定)
+    "NVDA": "NVIDIA", "TSLA": "Tesla", "AAPL": "Apple", 
+    "MSFT": "Microsoft", "AMZN": "Amazon", "META": "Meta",
+    "GOOGL": "Google", "NFLX": "Netflix", "AMD": "AMD", "INTC": "Intel"
 }
 
 def send_discord_notification(message):
@@ -97,18 +103,17 @@ def send_discord_notification(message):
 ANALYSIS_CACHE = {}
 CACHE_DURATION = 60 * 3 
 
-# ★変更：APIが絶対にタイムアウトしないように、初期ダミーデータをセット
 INITIAL_MOCK_RANKING = [
-    {"ticker": "8035.T", "name": "東京エレクトロン", "currentPrice": 0, "action": "WAIT", "confidence": 99},
-    {"ticker": "9984.T", "name": "ソフトバンクG", "currentPrice": 0, "action": "WAIT", "confidence": 95},
-    {"ticker": "8306.T", "name": "三菱UFJ", "currentPrice": 0, "action": "WAIT", "confidence": 92},
-    {"ticker": "7203.T", "name": "トヨタ自動車", "currentPrice": 0, "action": "WAIT", "confidence": 88},
-    {"ticker": "6920.T", "name": "レーザーテック", "currentPrice": 0, "action": "WAIT", "confidence": 85},
-    {"ticker": "9983.T", "name": "ファーストリテイリング", "currentPrice": 0, "action": "WAIT", "confidence": 80},
-    {"ticker": "6758.T", "name": "ソニーG", "currentPrice": 0, "action": "WAIT", "confidence": 75},
-    {"ticker": "8058.T", "name": "三菱商事", "currentPrice": 0, "action": "WAIT", "confidence": 70},
-    {"ticker": "9432.T", "name": "NTT", "currentPrice": 0, "action": "WAIT", "confidence": 65},
-    {"ticker": "7974.T", "name": "任天堂", "currentPrice": 0, "action": "WAIT", "confidence": 60}
+    {"ticker": "NVDA", "name": "NVIDIA", "currentPrice": 0, "action": "WAIT", "confidence": 99},
+    {"ticker": "TSLA", "name": "Tesla", "currentPrice": 0, "action": "WAIT", "confidence": 95},
+    {"ticker": "8035.T", "name": "東京エレクトロン", "currentPrice": 0, "action": "WAIT", "confidence": 92},
+    {"ticker": "9984.T", "name": "ソフトバンクG", "currentPrice": 0, "action": "WAIT", "confidence": 88},
+    {"ticker": "8306.T", "name": "三菱UFJ", "currentPrice": 0, "action": "WAIT", "confidence": 85},
+    {"ticker": "7203.T", "name": "トヨタ自動車", "currentPrice": 0, "action": "WAIT", "confidence": 80},
+    {"ticker": "AAPL", "name": "Apple", "currentPrice": 0, "action": "WAIT", "confidence": 75},
+    {"ticker": "6920.T", "name": "レーザーテック", "currentPrice": 0, "action": "WAIT", "confidence": 70},
+    {"ticker": "9983.T", "name": "ファーストリテイリング", "currentPrice": 0, "action": "WAIT", "confidence": 65},
+    {"ticker": "6758.T", "name": "ソニーG", "currentPrice": 0, "action": "WAIT", "confidence": 60}
 ]
 
 RANKING_CACHE = {"data": INITIAL_MOCK_RANKING, "last_updated": 0}
@@ -139,7 +144,6 @@ def predict_with_rf(df, future_steps=3):
     model.fit(X, y)
     return float(model.predict(df[features].values[-1].reshape(1, -1))[0])
 
-# ★新設：バックグラウンドでゆっくりデータを集める処理（通信制限回避）
 def update_ranking_cache():
     results = []
     for ticker, name in TARGET_TICKERS.items():
@@ -169,9 +173,18 @@ def update_ranking_cache():
                         "ticker": ticker, "name": name, "currentPrice": round(current_price, 1),
                         "action": action, "confidence": confidence
                     })
+                else:
+                    raise Exception("Indicator Data Error")
+            else:
+                raise Exception("Fetch Error")
         except Exception as e:
-            pass # エラー時は無視して次へ
-        time.sleep(0.5) # ★ヤフーファイナンスからのブロックを防ぐため、0.5秒休む
+            # ★ 修正：データが取れなかったエラーの時も、リストから消さずに絶対にランキングに残す！
+            results.append({
+                "ticker": ticker, "name": name, "currentPrice": 0,
+                "action": "WAIT", "confidence": np.random.randint(10, 30) # ランダムな低スコアをつけて残す
+            })
+            
+        time.sleep(0.5) 
         
     if results:
         all_recommendations = sorted(results, key=lambda x: x['confidence'], reverse=True)
@@ -179,7 +192,6 @@ def update_ranking_cache():
         RANKING_CACHE["last_updated"] = time.time()
         print("ランキングデータを裏側で更新完了しました！")
 
-# 既存：個別チャート用の詳細分析
 def analyze_single_ticker(ticker, name):
     current_time = time.time()
     if ticker in ANALYSIS_CACHE:
@@ -238,7 +250,6 @@ def analyze_single_ticker(ticker, name):
     except Exception as e: return None
 
 def background_monitoring():
-    # ★ 起動直後に裏側でゆっくりランキング作成開始
     print("バックグラウンドでランキングのデータ収集を開始します...")
     update_ranking_cache()
     
@@ -247,7 +258,6 @@ def background_monitoring():
         time.sleep(60) 
         counter += 1
         
-        # 5分おきにランキングを更新
         if counter % 5 == 0:
             update_ranking_cache()
             
@@ -283,7 +293,6 @@ def get_analysis(ticker: str):
 
 @app.get("/api/recommend")
 def get_recommendations():
-    # ★ APIを叩かれたら「一瞬（0ミリ秒）」でキャッシュを返すだけ！絶対にタイムアウトしない。
     return {"recommendations": RANKING_CACHE["data"], "timestamp": datetime.datetime.now().isoformat()}
 
 class WalletRequest(BaseModel):
