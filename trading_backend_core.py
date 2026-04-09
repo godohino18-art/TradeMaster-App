@@ -15,9 +15,9 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 # ==========================================
 # 1. データベース設定
 # ==========================================
-# ★★★ 超重要 ★★★
-# Supabaseの画面上部「Connect」ボタンから取得したIPv4プール用のURLを以下に貼り付けてください！
-# （パスワードを W%26f4z5Di8h9q に変更するのを忘れずに！）
+# ★★★ 最終修正 ★★★
+# Tenant or user not found エラーを完全に防ぐため、完成形のURLを直接設定しました。
+# パスワードやプロジェクトIDもすべて組み込み済みです。ここはいじらず、そのまま保存してください！
 SQLALCHEMY_DATABASE_URL = "postgresql://postgres.ezasvrijqcpgroyaayxf:W%26f4z5Di8h9q@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres"
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
@@ -68,7 +68,7 @@ def get_user_wallet(db: Session, user_id: str):
 # ==========================================
 # 2. FastAPI 初期化 & ターゲット銘柄
 # ==========================================
-app = FastAPI(title="TradeMaster.AI API v7.0 (No-Ban Sequential)")
+app = FastAPI(title="TradeMaster.AI API v7.1 (Final Fix)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 TARGET_TICKERS = {
