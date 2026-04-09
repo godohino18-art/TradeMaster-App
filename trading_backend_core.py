@@ -8,9 +8,6 @@ import datetime
 import uvicorn
 import threading
 import time
-import requests
-import io
-import concurrent.futures
 from sklearn.ensemble import RandomForestRegressor
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
@@ -68,10 +65,14 @@ def get_user_wallet(db: Session, user_id: str):
 # ==========================================
 # 2. FastAPI 初期化 & ターゲット銘柄
 # ==========================================
-app = FastAPI(title="TradeMaster.AI API v6.0 (Invincible)")
+app = FastAPI(title="TradeMaster.AI API v7.0 (No-Ban Sequential)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+# ★修正：絶対にデータが取れる米国株を前半に配置し、確実性を担保
 TARGET_TICKERS = {
+    "NVDA": "NVIDIA", "TSLA": "Tesla", "AAPL": "Apple", 
+    "MSFT": "Microsoft", "AMZN": "Amazon", "META": "Meta",
+    "GOOGL": "Google", "NFLX": "Netflix", "AMD": "AMD", "INTC": "Intel",
     "8306.T": "三菱UFJ", "8316.T": "三井住友", "8411.T": "みずほ",
     "7203.T": "トヨタ自動車", "7267.T": "ホンダ", "7269.T": "スズキ",
     "8035.T": "東京エレクトロン", "6920.T": "レーザーテック", "6857.T": "アドバンテスト", "6146.T": "ディスコ",
@@ -79,42 +80,13 @@ TARGET_TICKERS = {
     "9983.T": "ファーストリテイリング", "8058.T": "三菱商事", "8031.T": "三井物産", "8001.T": "伊藤忠",
     "6758.T": "ソニーG", "6861.T": "キーエンス", "7974.T": "任天堂", "9766.T": "コナミG",
     "9101.T": "日本郵船", "9104.T": "商船三井", "9107.T": "川崎汽船",
-    "5401.T": "日本製鉄", "7011.T": "三菱重工", "4385.T": "メルカリ", "6098.T": "リクルート",
-    "NVDA": "NVIDIA", "TSLA": "Tesla", "AAPL": "Apple", 
-    "MSFT": "Microsoft", "AMZN": "Amazon", "META": "Meta",
-    "GOOGL": "Google", "NFLX": "Netflix", "AMD": "AMD", "INTC": "Intel"
+    "5401.T": "日本製鉄", "7011.T": "三菱重工", "4385.T": "メルカリ", "6098.T": "リクルート"
 }
 
 # ==========================================
-# 3. 鉄壁のデータ取得（ヤフー ＋ Stooq並列処理）
+# 3. 直列データ取得システム（スパム認定回避）
 # ==========================================
 REAL_RANKING_DATA = []
-
-# ★ Yahooがダメな時に別の金融サイトからCSVを引っ張る最強のフォールバック
-def fetch_stock_data_robust(ticker, period="3mo", interval="1d"):
-    try:
-        # まずは普通に yfinance で取得
-        df = yf.Ticker(ticker).history(period=period, interval=interval)
-        if df is not None and not df.empty and len(df) > 20:
-            return df[['Close', 'Volume']]
-    except Exception:
-        pass
-    
-    # yfinance がブロックされたら、Stooq から直接取得
-    try:
-        stooq_ticker = ticker.replace('.T', '.JP') if '.T' in ticker else ticker + '.US'
-        url = f"https://stooq.com/q/d/l/?s={stooq_ticker}&i=d"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code == 200:
-            df = pd.read_csv(io.StringIO(res.text), index_col='Date', parse_dates=True)
-            if not df.empty and len(df) > 20:
-                df = df.sort_index()
-                return df[['Close', 'Volume']]
-    except Exception:
-        pass
-        
-    return None
 
 def add_technical_indicators(df):
     df['SMA5'] = df['Close'].rolling(window=5).mean()
@@ -140,11 +112,14 @@ def update_ranking_cache():
     global REAL_RANKING_DATA
     valid_stocks = []
     
-    print("強固な並列処理で本物データのダウンロードを開始します...")
+    print("本物データの『直列ダウンロード（スパム回避）』を開始します...")
     
-    def process_ticker(ticker, name):
+    # ★修正：並列処理を完全に廃止。1社ずつお行儀よく取得してブロックを100%防ぐ
+    for ticker, name in TARGET_TICKERS.items():
         try:
-            df = fetch_stock_data_robust(ticker, period="3mo", interval="1d")
+            stock = yf.Ticker(ticker)
+            df = stock.history(period="3mo", interval="1d")
+            
             if df is not None and not df.empty and len(df) >= 25:
                 df = add_technical_indicators(df)
                 if len(df) >= 5:
@@ -165,24 +140,18 @@ def update_ranking_cache():
                     raw_score = (rsi_score + dev_score + 15) * momentum 
                     confidence = max(5, min(99, int(raw_score)))
                     
-                    return {
+                    valid_stocks.append({
                         "ticker": ticker,
                         "name": name,
                         "currentPrice": round(current_price, 1),
                         "action": "CALL" if confidence >= 50 else "WAIT",
                         "confidence": confidence
-                    }
-        except Exception:
-            pass
-        return None
-
-    # マルチスレッドで高速・確実にデータをかき集める
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        futures = [executor.submit(process_ticker, t, n) for t, n in TARGET_TICKERS.items()]
-        for future in concurrent.futures.as_completed(futures):
-            res = future.result()
-            if res:
-                valid_stocks.append(res)
+                    })
+        except Exception as e:
+            print(f"スキップ: {ticker}") # エラーは無視して進む
+        
+        # ★超重要：ヤフーに怒られないよう、必ず0.8秒待ってから次を取得
+        time.sleep(0.8) 
                 
     if valid_stocks:
         valid_stocks.sort(key=lambda x: x['confidence'], reverse=True)
@@ -191,8 +160,14 @@ def update_ranking_cache():
 
 def analyze_single_ticker(ticker, name):
     try:
-        # 詳細チャートもまずは確実なルートで取得を試みる
-        df = fetch_stock_data_robust(ticker, period="3mo", interval="1d")
+        stock = yf.Ticker(ticker)
+        df = stock.history(period="5d", interval="5m")
+        is_daily = False
+        
+        # 5分足がダメなら日足で確実に返す
+        if df is None or df.empty or len(df) < 30:
+            df = stock.history(period="3mo", interval="1d")
+            is_daily = True
             
         if df is None or df.empty or len(df) < 30: 
             raise Exception("データ取得失敗")
@@ -211,7 +186,7 @@ def analyze_single_ticker(ticker, name):
         recent_df = df.tail(40)
         chart_data = []
         for idx, row in recent_df.iterrows():
-            time_str = idx.strftime("%m/%d")
+            time_str = idx.strftime("%m/%d") if is_daily else idx.strftime("%H:%M")
             chart_data.append({
                 "time": time_str,
                 "price": round(float(row['Close']), 1),
@@ -244,7 +219,7 @@ def background_monitoring():
     while True:
         time.sleep(60) 
         counter += 1
-        if counter % 10 == 0: 
+        if counter % 15 == 0: 
             update_ranking_cache()
 
 @app.on_event("startup")
@@ -263,7 +238,7 @@ def get_analysis(ticker: str):
 
 @app.get("/api/recommend")
 def get_recommendations():
-    # 本物の上位10社を返す
+    # ★ 本物の上位10社を返す
     top_10 = REAL_RANKING_DATA[:10]
     return {"recommendations": top_10, "timestamp": datetime.datetime.now().isoformat()}
 
@@ -296,7 +271,7 @@ class BuyRequest(BaseModel):
 def buy_stock(req: BuyRequest, db: Session = Depends(get_db)):
     name = TARGET_TICKERS.get(req.ticker, req.ticker)
     
-    stock_df = fetch_stock_data_robust(req.ticker, period="1mo", interval="1d")
+    stock_df = yf.Ticker(req.ticker).history(period="5d", interval="1d")
     if stock_df is None or stock_df.empty:
         raise HTTPException(status_code=400, detail="現在の株価が取得できませんでした")
         
@@ -331,7 +306,7 @@ def sell_stock(item_id: int, user_id: str, db: Session = Depends(get_db)):
     item = db.query(PortfolioItem).filter(PortfolioItem.id == item_id, PortfolioItem.user_id == user_id).first()
     if not item: raise HTTPException(status_code=404, detail="Item not found")
     
-    stock_df = fetch_stock_data_robust(item.ticker, period="1mo", interval="1d")
+    stock_df = yf.Ticker(item.ticker).history(period="5d", interval="1d")
     current_price = float(stock_df['Close'].iloc[-1]) if stock_df is not None and not stock_df.empty else item.avg_price
     
     profit = (current_price - item.avg_price) * item.shares
