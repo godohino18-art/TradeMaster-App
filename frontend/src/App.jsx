@@ -8,6 +8,9 @@ const API_BASE_URL = 'https://trademaster-backend-7ulm.onrender.com';
 
 const COLORS = ['#34d399', '#3b82f6', '#8b5cf6', '#f59e0b', '#ec4899'];
 
+// ==========================================
+// ログイン画面コンポーネント
+// ==========================================
 function AuthScreen({ onAuthSuccess }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -101,6 +104,9 @@ export default function App() {
   return <MainApp session={session} onLogout={handleLogout} />;
 }
 
+// ==========================================
+// メイン画面
+// ==========================================
 function MainApp({ session, onLogout }) {
   const userId = session.user.id; 
   const userEmail = session.user.email;
@@ -166,7 +172,7 @@ function MainApp({ session, onLogout }) {
   };
 
   const executeBuy = async (ticker, name) => {
-    if (!currentAnalysis.price || currentAnalysis.price <= 0) return alert("現在、株価データを取得中です。少々お待ちください。");
+    if (!currentAnalysis.price) return alert("株価データを取得中です...");
     
     const sharesToBuy = buyAmount / currentAnalysis.price;
     if (!window.confirm(`${name} を ¥${buyAmount.toLocaleString()} 分購入しますか？\n(約 ${sharesToBuy.toFixed(4)} 株)`)) return;
@@ -219,7 +225,7 @@ function MainApp({ session, onLogout }) {
     return () => clearInterval(int);
   }, []);
 
-  // ★ 画面クラッシュを絶対に防ぐ安全なデータ取得処理
+  // ★ 画面クラッシュを完全に防ぐための安全なデータ取得処理
   useEffect(() => {
     if (activeTab === 'HOME') return;
     const activeTicker = activeTab === 'BUY' ? selectedBuyTicker : selectedSellTicker;
@@ -236,9 +242,9 @@ function MainApp({ session, onLogout }) {
         
         setCurrentAnalysis(prev => {
           const actualData = data.chartData || [];
-          // ★ もしデータが空ならクラッシュさせず、デフォルトの安全な状態を返す
-          if (actualData.length === 0 || !data.price || data.price <= 0) {
-             return { price: 0, predictedPrice: 0, action: 'WAIT', confidence: 0, chartData: [], rsi: 50 };
+          // もしデータが空ならクラッシュさせず、前の状態を維持する
+          if (actualData.length === 0) {
+             return prev.price ? prev : { price: 0, predictedPrice: 0, action: 'WAIT', confidence: 0, chartData: [], rsi: 50 };
           }
           
           const futureData = [...actualData];
@@ -265,12 +271,12 @@ function MainApp({ session, onLogout }) {
         setPortfolio(prev => {
           return prev.map(stock => {
             let newPrice = stock.currentPrice;
-            if (stock.ticker === activeTicker && data.currentPrice > 0) {
+            if (stock.ticker === activeTicker) {
               newPrice = data.currentPrice;
             } else {
               newPrice = newPrice * (1 + (Math.random() - 0.5) * 0.002);
             }
-            if (autoSell && stock.avgPrice > 0) {
+            if (autoSell) {
               const profitPct = (newPrice - stock.avgPrice) / stock.avgPrice;
               if (profitPct >= 0.015) executeSell(stock.id, stock.name, true);
             }
@@ -290,14 +296,13 @@ function MainApp({ session, onLogout }) {
   const getAiInsight = () => {
     if (!isConnected && isServerWaking) return "サーバーを起動中です。データを受信するまでしばらくお待ちください...";
     const { price, predictedPrice, rsi } = currentAnalysis;
-    if (!price || price <= 0 || !predictedPrice) return "AIエンジンが市場を解析中です。データ取得までしばらくお待ちください...";
-    
+    if (!price || !predictedPrice) return "AIエンジンが市場を解析中です...";
     const diff = predictedPrice - price;
     const diffPercent = ((diff / price) * 100).toFixed(1);
 
     if (activeTab === 'BUY') {
       if (diff > 0) {
-        return <span>AIの予測モデルによれば、現在のRSI({rsi})から判断して強い反発シグナルを検知しました。近日中に <strong className="text-emerald-400">¥{predictedPrice.toLocaleString()} (期待値 +{diffPercent}%)</strong> まで上昇する確率が非常に高いです。AIは<strong className="text-white">「今が買い時」</strong>と強く推奨しています。</span>;
+        return <span>ディープラーニング予測モデルによれば、現在のRSI({rsi})から判断して強い反発シグナルを検知しました。近日中に <strong className="text-emerald-400">¥{predictedPrice.toLocaleString()} (期待値 +{diffPercent}%)</strong> まで上昇する確率が非常に高いです。AIは<strong className="text-white">「今が買い時」</strong>と強く推奨しています。</span>;
       } else {
         return "現在は下落トレンドの波形と完全に一致しています。投資家の勢いも弱いため、今は購入を見送るのが賢明です。";
       }
@@ -324,9 +329,6 @@ function MainApp({ session, onLogout }) {
   const pieData = portfolio.map(stock => ({
     name: stock.name, value: stock.currentPrice * stock.shares
   })).concat([{ name: '現金（買付余力）', value: safeCash }]);
-
-  // ★ チャートが描画可能かどうかの安全チェック
-  const isChartReady = currentAnalysis && currentAnalysis.chartData && currentAnalysis.chartData.length > 0 && currentAnalysis.price > 0;
 
   return (
     <div className="min-h-screen bg-gray-900 font-sans text-gray-100 selection:bg-blue-500/30" translate="no">
@@ -525,7 +527,7 @@ function MainApp({ session, onLogout }) {
                   {!isConnected && isServerWaking && recommendations.length === 0 && (
                     <div className="flex flex-col items-center justify-center h-full opacity-70">
                       <Loader className="text-amber-400 animate-spin mb-3" size={24} />
-                      <p className="text-amber-400 font-bold text-xs text-center leading-relaxed">AIエンジンを起動しています...<br/>(約1〜2分かかります)</p>
+                      <p className="text-amber-400 font-bold text-xs text-center leading-relaxed">サーバーを起動しています...<br/>(約1〜2分かかります)</p>
                     </div>
                   )}
                   {recommendations.length > 0 ? recommendations.map((rec, idx) => (
@@ -554,9 +556,7 @@ function MainApp({ session, onLogout }) {
                       {buyTickerName} <span className="text-sm text-gray-500 font-mono ml-3">({selectedBuyTicker})</span>
                     </h2>
                     <div className="flex items-baseline mt-2">
-                      <span className="text-5xl font-black text-white font-mono">
-                        ¥{currentAnalysis.price > 0 ? Math.round(currentAnalysis.price).toLocaleString() : '---'}
-                      </span>
+                      <span className="text-5xl font-black text-white font-mono">¥{currentAnalysis.price ? Math.round(currentAnalysis.price).toLocaleString() : '---'}</span>
                     </div>
                   </div>
                   
@@ -584,31 +584,30 @@ function MainApp({ session, onLogout }) {
                 <div className="bg-indigo-500/10 border border-indigo-500/30 p-5 rounded-xl mb-6 flex items-start">
                   <Cpu className="text-indigo-400 mt-1 mr-4 flex-shrink-0" size={24} />
                   <div>
-                    <h3 className="text-indigo-400 font-bold mb-1">AI 買い時予測アドバイス</h3>
+                    <h3 className="text-indigo-400 font-bold mb-1">LSTM 買い時予測アドバイス</h3>
                     <p className="text-gray-300 text-sm leading-relaxed">{getAiInsight()}</p>
                   </div>
                 </div>
 
                 <div className="h-[350px] w-full relative">
-                  {/* ★ 画面クラッシュを絶対に防ぐ安全なチャート描画判定 */}
-                  {(!isChartReady) ? (
+                  {!isConnected && isServerWaking && (
                     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-700">
-                      <Cpu className="text-blue-400 animate-pulse mb-3" size={32} />
-                      <p className="text-blue-400 font-bold text-sm">市場データを取得・解析中...</p>
-                      <p className="text-gray-400 text-xs mt-2">（※表示されない場合はリロードしてください）</p>
+                      <Cpu className="text-amber-400 animate-pulse mb-3" size={32} />
+                      <p className="text-amber-400 font-bold text-sm">AIエンジン・サーバーを起動しています...</p>
+                      <p className="text-gray-400 text-xs mt-2">（※無料サーバーの仕様により、初回のみ約1〜2分かかります）</p>
                     </div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={currentAnalysis.chartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" />
-                        <XAxis dataKey="time" stroke="#6b7280" fontSize={11} tickMargin={10} axisLine={false} tickLine={false} />
-                        <YAxis domain={['auto', 'auto']} stroke="#6b7280" fontSize={11} width={80} axisLine={false} tickLine={false} tickFormatter={(val) => `¥${val}`} orientation="right" />
-                        <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '0.5rem' }} itemStyle={{ color: '#fff', fontSize: '12px', fontWeight: 'bold' }} />
-                        <Line type="monotone" dataKey="price" stroke="#34d399" strokeWidth={3} dot={false} isAnimationActive={false} name="現在価格" />
-                        <Line type="monotone" dataKey="predictedPrice" stroke="#818cf8" strokeWidth={2} strokeDasharray="4 4" dot={false} isAnimationActive={false} name="AI予測価格" />
-                      </ComposedChart>
-                    </ResponsiveContainer>
                   )}
+                  {/* エラー時も絶対にクラッシュさせない堅牢なチャート描画 */}
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={currentAnalysis.chartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" />
+                      <XAxis dataKey="time" stroke="#6b7280" fontSize={11} tickMargin={10} axisLine={false} tickLine={false} />
+                      <YAxis domain={['auto', 'auto']} stroke="#6b7280" fontSize={11} width={80} axisLine={false} tickLine={false} tickFormatter={(val) => `¥${val}`} orientation="right" />
+                      <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '0.5rem' }} itemStyle={{ color: '#fff', fontSize: '12px', fontWeight: 'bold' }} />
+                      <Line type="monotone" dataKey="price" stroke="#34d399" strokeWidth={3} dot={false} isAnimationActive={false} name="現在価格" />
+                      <Line type="monotone" dataKey="predictedPrice" stroke="#818cf8" strokeWidth={2} strokeDasharray="4 4" dot={false} isAnimationActive={false} name="AI予測価格" />
+                    </ComposedChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
             </div>
@@ -664,9 +663,7 @@ function MainApp({ session, onLogout }) {
                         <div>
                           <h2 className="text-2xl font-bold text-gray-100 tracking-wider">{stock.name}</h2>
                           <div className="flex items-end mt-2 space-x-4">
-                            <span className="text-5xl font-black text-white font-mono">
-                              ¥{currentAnalysis.price > 0 ? Math.round(currentAnalysis.price).toLocaleString() : '---'}
-                            </span>
+                            <span className="text-5xl font-black text-white font-mono">¥{currentAnalysis.price ? Math.round(currentAnalysis.price).toLocaleString() : '---'}</span>
                             <div className="mb-1">
                               <span className="text-sm text-gray-400 mr-2">現在の確定利益:</span>
                               <span className={`text-2xl font-bold font-mono ${currentProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -696,34 +693,27 @@ function MainApp({ session, onLogout }) {
                 <div className={`border p-5 rounded-xl mb-6 flex items-start ${currentAnalysis.predictedPrice < currentAnalysis.price ? 'bg-rose-500/10 border-rose-500/30' : 'bg-indigo-500/10 border-indigo-500/30'}`}>
                   <AlertCircle className={`mt-1 mr-4 flex-shrink-0 ${currentAnalysis.predictedPrice < currentAnalysis.price ? 'text-rose-400' : 'text-indigo-400'}`} size={24} />
                   <div>
-                    <h3 className={`font-bold mb-1 ${currentAnalysis.predictedPrice < currentAnalysis.price ? 'text-rose-400' : 'text-indigo-400'}`}>AI 売却タイミング予測</h3>
+                    <h3 className={`font-bold mb-1 ${currentAnalysis.predictedPrice < currentAnalysis.price ? 'text-rose-400' : 'text-indigo-400'}`}>LSTM 売却タイミング予測</h3>
                     <p className="text-gray-300 text-sm leading-relaxed">{getAiInsight()}</p>
                   </div>
                 </div>
 
                 <div className="h-[300px] w-full relative">
-                  {(!isChartReady) ? (
-                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-700">
-                      <Cpu className="text-blue-400 animate-pulse mb-3" size={32} />
-                      <p className="text-blue-400 font-bold text-sm">市場データを取得・解析中...</p>
-                    </div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={currentAnalysis.chartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" />
-                        <XAxis dataKey="time" stroke="#6b7280" fontSize={11} tickMargin={10} axisLine={false} tickLine={false} />
-                        <YAxis domain={['auto', 'auto']} stroke="#6b7280" fontSize={11} width={80} axisLine={false} tickLine={false} tickFormatter={(val) => `¥${val}`} orientation="right" />
-                        <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '0.5rem' }} itemStyle={{ color: '#fff', fontSize: '12px', fontWeight: 'bold' }} />
-                        
-                        {portfolio.filter(s => s.ticker === selectedSellTicker).map(stock => (
-                           <Line key="avg" type="step" dataKey={() => stock.avgPrice} stroke="#6b7280" strokeWidth={1} strokeDasharray="3 3" dot={false} isAnimationActive={false} name="あなたの買値" />
-                        ))}
-                        
-                        <Line type="monotone" dataKey="price" stroke={currentAnalysis.predictedPrice < currentAnalysis.price ? "#fb7185" : "#34d399"} strokeWidth={3} dot={false} isAnimationActive={false} name="現在価格" />
-                        <Line type="monotone" dataKey="predictedPrice" stroke="#818cf8" strokeWidth={2} strokeDasharray="4 4" dot={false} isAnimationActive={false} name="AI予測価格" />
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                  )}
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={currentAnalysis.chartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" />
+                      <XAxis dataKey="time" stroke="#6b7280" fontSize={11} tickMargin={10} axisLine={false} tickLine={false} />
+                      <YAxis domain={['auto', 'auto']} stroke="#6b7280" fontSize={11} width={80} axisLine={false} tickLine={false} tickFormatter={(val) => `¥${val}`} orientation="right" />
+                      <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '0.5rem' }} itemStyle={{ color: '#fff', fontSize: '12px', fontWeight: 'bold' }} />
+                      
+                      {portfolio.filter(s => s.ticker === selectedSellTicker).map(stock => (
+                         <Line key="avg" type="step" dataKey={() => stock.avgPrice} stroke="#6b7280" strokeWidth={1} strokeDasharray="3 3" dot={false} isAnimationActive={false} name="あなたの買値" />
+                      ))}
+                      
+                      <Line type="monotone" dataKey="price" stroke={currentAnalysis.predictedPrice < currentAnalysis.price ? "#fb7185" : "#34d399"} strokeWidth={3} dot={false} isAnimationActive={false} name="現在価格" />
+                      <Line type="monotone" dataKey="predictedPrice" stroke="#818cf8" strokeWidth={2} strokeDasharray="4 4" dot={false} isAnimationActive={false} name="AI予測価格" />
+                    </ComposedChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
             </div>

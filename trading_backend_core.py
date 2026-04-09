@@ -9,6 +9,8 @@ import uvicorn
 import threading
 import time
 import requests
+import io
+import concurrent.futures
 from sklearn.ensemble import RandomForestRegressor
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
@@ -66,7 +68,7 @@ def get_user_wallet(db: Session, user_id: str):
 # ==========================================
 # 2. FastAPI 初期化 & ターゲット銘柄
 # ==========================================
-app = FastAPI(title="TradeMaster.AI API v5.0 (Ultimate Fix)")
+app = FastAPI(title="TradeMaster.AI API v6.0 (Invincible)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 TARGET_TICKERS = {
@@ -84,9 +86,35 @@ TARGET_TICKERS = {
 }
 
 # ==========================================
-# 3. 最強のデータ取得システム（一括ダウンロード）
+# 3. 鉄壁のデータ取得（ヤフー ＋ Stooq並列処理）
 # ==========================================
 REAL_RANKING_DATA = []
+
+# ★ Yahooがダメな時に別の金融サイトからCSVを引っ張る最強のフォールバック
+def fetch_stock_data_robust(ticker, period="3mo", interval="1d"):
+    try:
+        # まずは普通に yfinance で取得
+        df = yf.Ticker(ticker).history(period=period, interval=interval)
+        if df is not None and not df.empty and len(df) > 20:
+            return df[['Close', 'Volume']]
+    except Exception:
+        pass
+    
+    # yfinance がブロックされたら、Stooq から直接取得
+    try:
+        stooq_ticker = ticker.replace('.T', '.JP') if '.T' in ticker else ticker + '.US'
+        url = f"https://stooq.com/q/d/l/?s={stooq_ticker}&i=d"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            df = pd.read_csv(io.StringIO(res.text), index_col='Date', parse_dates=True)
+            if not df.empty and len(df) > 20:
+                df = df.sort_index()
+                return df[['Close', 'Volume']]
+    except Exception:
+        pass
+        
+    return None
 
 def add_technical_indicators(df):
     df['SMA5'] = df['Close'].rolling(window=5).mean()
@@ -111,77 +139,63 @@ def predict_with_rf(df, future_steps=3):
 def update_ranking_cache():
     global REAL_RANKING_DATA
     valid_stocks = []
-    tickers_list = list(TARGET_TICKERS.keys())
-    tickers_str = " ".join(tickers_list)
     
-    print("本物データの『一括ダウンロード』を開始します...")
-    try:
-        # ★ 究極のブロック回避：全社分のデータを「1回の通信」でまとめて取得する
-        data = yf.download(tickers_str, period="3mo", interval="1d", threads=True, progress=False)
-        
-        for ticker, name in TARGET_TICKERS.items():
-            try:
-                # 取得した巨大なデータ表から、該当する1社のデータだけを安全に切り抜く
-                if 'Close' in data and ticker in data['Close'] and 'Volume' in data and ticker in data['Volume']:
-                    df = pd.DataFrame({
-                        'Close': data['Close'][ticker],
-                        'Volume': data['Volume'][ticker]
-                    }).dropna()
+    print("強固な並列処理で本物データのダウンロードを開始します...")
+    
+    def process_ticker(ticker, name):
+        try:
+            df = fetch_stock_data_robust(ticker, period="3mo", interval="1d")
+            if df is not None and not df.empty and len(df) >= 25:
+                df = add_technical_indicators(df)
+                if len(df) >= 5:
+                    current_price = float(df['Close'].iloc[-1])
+                    current_rsi = float(df['RSI'].iloc[-1])
+                    sma20 = float(df['SMA20'].iloc[-1])
+                    deviation = ((current_price - sma20) / sma20) * 100
+                    recent_vol = float(df['Volume'].iloc[-1])
+                    avg_vol = float(df['Volume'].tail(10).mean())
                     
-                    if not df.empty and len(df) >= 25:
-                        df = add_technical_indicators(df)
-                        if len(df) >= 5:
-                            current_price = float(df['Close'].iloc[-1])
-                            current_rsi = float(df['RSI'].iloc[-1])
-                            sma20 = float(df['SMA20'].iloc[-1])
-                            deviation = ((current_price - sma20) / sma20) * 100
-                            recent_vol = float(df['Volume'].iloc[-1])
-                            avg_vol = float(df['Volume'].tail(10).mean())
-                            
-                            # 勝つための厳密な底値判定スコア
-                            rsi_score = max(0, (40 - current_rsi) * 2.5)
-                            dev_score = max(0, -deviation) * 3.0
-                            momentum = 1.0
-                            if avg_vol > 0 and recent_vol > avg_vol:
-                                momentum = min(2.5, recent_vol / avg_vol)
-                                
-                            raw_score = (rsi_score + dev_score + 15) * momentum 
-                            confidence = max(5, min(99, int(raw_score)))
-                            
-                            valid_stocks.append({
-                                "ticker": ticker,
-                                "name": name,
-                                "currentPrice": round(current_price, 1),
-                                "action": "CALL" if confidence >= 50 else "WAIT",
-                                "confidence": confidence
-                            })
-            except Exception as e:
-                continue # エラーが起きた銘柄は無視して次へ（アプリは落とさない）
-    except Exception as e:
-        print("一括ダウンロードエラー:", e)
-        
+                    # 勝つための厳格な底値判定スコア
+                    rsi_score = max(0, (40 - current_rsi) * 2.5)
+                    dev_score = max(0, -deviation) * 3.0
+                    momentum = 1.0
+                    if avg_vol > 0 and recent_vol > avg_vol:
+                        momentum = min(2.5, recent_vol / avg_vol)
+                        
+                    raw_score = (rsi_score + dev_score + 15) * momentum 
+                    confidence = max(5, min(99, int(raw_score)))
+                    
+                    return {
+                        "ticker": ticker,
+                        "name": name,
+                        "currentPrice": round(current_price, 1),
+                        "action": "CALL" if confidence >= 50 else "WAIT",
+                        "confidence": confidence
+                    }
+        except Exception:
+            pass
+        return None
+
+    # マルチスレッドで高速・確実にデータをかき集める
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(process_ticker, t, n) for t, n in TARGET_TICKERS.items()]
+        for future in concurrent.futures.as_completed(futures):
+            res = future.result()
+            if res:
+                valid_stocks.append(res)
+                
     if valid_stocks:
-        # ランキング化して保存
         valid_stocks.sort(key=lambda x: x['confidence'], reverse=True)
         REAL_RANKING_DATA = valid_stocks
-        print(f"ランキング更新完了: {len(valid_stocks)}社の本物データを確保")
+        print(f"ランキング更新完了: {len(valid_stocks)}社の本物データを確保しました！")
 
 def analyze_single_ticker(ticker, name):
     try:
-        # 個別銘柄の詳細チャート取得。5分足がダメなら1日足で「必ず」データを返す
-        df = yf.download(ticker, period="5d", interval="5m", progress=False)
-        is_daily = False
-        
-        if df is None or df.empty or len(df) < 30:
-            df = yf.download(ticker, period="3mo", interval="1d", progress=False)
-            is_daily = True
+        # 詳細チャートもまずは確実なルートで取得を試みる
+        df = fetch_stock_data_robust(ticker, period="3mo", interval="1d")
             
         if df is None or df.empty or len(df) < 30: 
             raise Exception("データ取得失敗")
-            
-        # yf.download の場合、カラムがフラットな場合とMultiIndexの場合があるため正規化
-        if isinstance(df.columns, pd.MultiIndex):
-            df = df.xs(ticker, level=1, axis=1)
             
         df = add_technical_indicators(df)
         if len(df) < 5: 
@@ -197,7 +211,7 @@ def analyze_single_ticker(ticker, name):
         recent_df = df.tail(40)
         chart_data = []
         for idx, row in recent_df.iterrows():
-            time_str = idx.strftime("%m/%d") if is_daily else idx.strftime("%H:%M")
+            time_str = idx.strftime("%m/%d")
             chart_data.append({
                 "time": time_str,
                 "price": round(float(row['Close']), 1),
@@ -218,7 +232,6 @@ def analyze_single_ticker(ticker, name):
             "chartData": chart_data
         }
     except Exception as e:
-        # ★ ここが重要：万が一全データが取れなくても、フロントエンドを絶対にクラッシュさせない空データを返す
         return {
             "ticker": ticker, "name": name, "currentPrice": 0,
             "predictedPrice": 0, "action": "WAIT", "confidence": 0,
@@ -231,7 +244,7 @@ def background_monitoring():
     while True:
         time.sleep(60) 
         counter += 1
-        if counter % 15 == 0: # 15分おきに確実な一括更新
+        if counter % 10 == 0: 
             update_ranking_cache()
 
 @app.on_event("startup")
@@ -250,7 +263,7 @@ def get_analysis(ticker: str):
 
 @app.get("/api/recommend")
 def get_recommendations():
-    # 確保した本物のデータ上位10社を返す
+    # 本物の上位10社を返す
     top_10 = REAL_RANKING_DATA[:10]
     return {"recommendations": top_10, "timestamp": datetime.datetime.now().isoformat()}
 
@@ -283,12 +296,11 @@ class BuyRequest(BaseModel):
 def buy_stock(req: BuyRequest, db: Session = Depends(get_db)):
     name = TARGET_TICKERS.get(req.ticker, req.ticker)
     
-    # 購入時の価格も強固な一括手法で取得
-    stock_data = yf.download(req.ticker, period="5d", interval="1d", progress=False)
-    if stock_data is None or stock_data.empty:
+    stock_df = fetch_stock_data_robust(req.ticker, period="1mo", interval="1d")
+    if stock_df is None or stock_df.empty:
         raise HTTPException(status_code=400, detail="現在の株価が取得できませんでした")
         
-    current_price = float(stock_data['Close'].iloc[-1])
+    current_price = float(stock_df['Close'].iloc[-1])
     total_cost = current_price * req.shares
 
     wallet = get_user_wallet(db, req.user_id)
@@ -319,8 +331,8 @@ def sell_stock(item_id: int, user_id: str, db: Session = Depends(get_db)):
     item = db.query(PortfolioItem).filter(PortfolioItem.id == item_id, PortfolioItem.user_id == user_id).first()
     if not item: raise HTTPException(status_code=404, detail="Item not found")
     
-    stock_data = yf.download(item.ticker, period="5d", interval="1d", progress=False)
-    current_price = float(stock_data['Close'].iloc[-1]) if stock_data is not None and not stock_data.empty else item.avg_price
+    stock_df = fetch_stock_data_robust(item.ticker, period="1mo", interval="1d")
+    current_price = float(stock_df['Close'].iloc[-1]) if stock_df is not None and not stock_df.empty else item.avg_price
     
     profit = (current_price - item.avg_price) * item.shares
     total_revenue = current_price * item.shares
