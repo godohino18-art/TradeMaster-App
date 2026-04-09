@@ -9,66 +9,30 @@ import uvicorn
 import threading
 import time
 from sklearn.ensemble import RandomForestRegressor
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+import json
+import os
 
 # ==========================================
-# 1. データベース設定
+# 1. インメモリデータベース（Supabase不要）
 # ==========================================
-SQLALCHEMY_DATABASE_URL = "postgresql://postgres:W%26f4z5Di8h9q@db.ezasvrijqcpgroyaayxf.supabase.co:5432/postgres"
+# ローカルメモリにデータを保存
+USERS_DATA = {}
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-class UserWallet(Base):
-    __tablename__ = "user_wallet_v1"
-    user_id = Column(String, primary_key=True, index=True)
-    balance = Column(Float, default=3000000.0) 
-
-class PortfolioItem(Base):
-    __tablename__ = "portfolio_v3"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, index=True)
-    ticker = Column(String, index=True)
-    name = Column(String)
-    shares = Column(Float) 
-    avg_price = Column(Float)
-    purchased_at = Column(DateTime, default=datetime.datetime.utcnow)
-
-class TradeHistory(Base):
-    __tablename__ = "trade_history_v3"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, index=True)
-    action = Column(String) 
-    ticker = Column(String)
-    name = Column(String)
-    profit = Column(Float) 
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-
-Base.metadata.create_all(bind=engine)
-
-def get_db():
-    db = SessionLocal()
-    try: yield db
-    finally: db.close()
-
-def get_user_wallet(db: Session, user_id: str):
-    wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
-    if not wallet:
-        wallet = UserWallet(user_id=user_id, balance=3000000.0)
-        db.add(wallet)
-        db.commit()
-        db.refresh(wallet)
-    return wallet
+def get_user_data(user_id: str):
+    if user_id not in USERS_DATA:
+        USERS_DATA[user_id] = {
+            "balance": 3000000.0,
+            "portfolio": [],
+            "history": []
+        }
+    return USERS_DATA[user_id]
 
 # ==========================================
 # 2. FastAPI 初期化 & ターゲット銘柄
 # ==========================================
-app = FastAPI(title="TradeMaster.AI API v8.0 (Winning Stocks Only)")
+app = FastAPI(title="TradeMaster.AI API v9.0 (Render Compatible)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# ★勝つための厳選銘柄リスト
 TARGET_TICKERS = {
     "NVDA": "NVIDIA", "TSLA": "Tesla", "AAPL": "Apple", 
     "MSFT": "Microsoft", "AMZN": "Amazon", "META": "Meta",
@@ -84,12 +48,11 @@ TARGET_TICKERS = {
 }
 
 # ==========================================
-# 3. AI解析システム（勝つための戦略）
+# 3. AI解析システム
 # ==========================================
 REAL_RANKING_DATA = []
 
 def add_technical_indicators(df):
-    """テクニカル指標を計算"""
     df['SMA5'] = df['Close'].rolling(window=5).mean()
     df['SMA20'] = df['Close'].rolling(window=20).mean()
     df['SMA50'] = df['Close'].rolling(window=50).mean()
@@ -101,7 +64,6 @@ def add_technical_indicators(df):
     ema_down = down.ewm(com=14, adjust=False).mean()
     df['RSI'] = 100 - (100 / (1 + ema_up / ema_down))
     
-    # MACD計算
     ema12 = df['Close'].ewm(span=12, adjust=False).mean()
     ema26 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = ema12 - ema26
@@ -110,7 +72,6 @@ def add_technical_indicators(df):
     return df.dropna()
 
 def predict_with_rf(df, future_steps=3):
-    """ランダムフォレストで価格予測"""
     if len(df) < 20: 
         return float(df['Close'].iloc[-1])
     
@@ -121,12 +82,14 @@ def predict_with_rf(df, future_steps=3):
     if len(X) == 0: 
         return float(df['Close'].iloc[-1])
     
-    model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1, max_depth=15)
-    model.fit(X, y)
-    return float(model.predict(df[features].values[-1].reshape(1, -1))[0])
+    try:
+        model = RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=1, max_depth=10)
+        model.fit(X, y)
+        return float(model.predict(df[features].values[-1].reshape(1, -1))[0])
+    except:
+        return float(df['Close'].iloc[-1])
 
 def update_ranking_cache():
-    """勝てる株を自動抽出するメインロジック"""
     global REAL_RANKING_DATA
     valid_stocks = []
     
@@ -153,96 +116,80 @@ def update_ranking_cache():
             sma50 = float(df['SMA50'].iloc[-1])
             sma200 = float(df['SMA200'].iloc[-1])
             
-            # 過去5日間の値動き
             price_5d_ago = float(df['Close'].iloc[-5])
             momentum_5d = ((current_price - price_5d_ago) / price_5d_ago) * 100
             
-            # 過去20日間の値動き
             price_20d_ago = float(df['Close'].iloc[-20])
             momentum_20d = ((current_price - price_20d_ago) / price_20d_ago) * 100
             
-            # ボリンジャーバンド計算
             bb_std = df['Close'].rolling(window=20).std().iloc[-1]
             bb_middle = sma20
             bb_upper = bb_middle + (bb_std * 2)
             bb_lower = bb_middle - (bb_std * 2)
             
-            # ボリューム分析
             recent_vol = float(df['Volume'].iloc[-1])
             avg_vol = float(df['Volume'].tail(20).mean())
             vol_ratio = recent_vol / avg_vol if avg_vol > 0 else 1.0
             
-            # MACD分析
             current_macd = float(df['MACD'].iloc[-1])
             current_signal = float(df['Signal'].iloc[-1])
             macd_diff = current_macd - current_signal
             
-            # ★本気の勝つための条件フィルター★
             winning_score = 0
             
-            # 1. RSI判定（売られすぎ＝反発の可能性）
             if current_rsi < 30:
-                winning_score += 25  # 売られすぎ状態
+                winning_score += 25
             elif 30 <= current_rsi <= 50:
-                winning_score += 20  # 理想的な反発ゾーン
+                winning_score += 20
             elif 50 < current_rsi <= 70:
-                winning_score += 15  # 中立
-            # 70以上は買われすぎなので加点しない
+                winning_score += 15
             
-            # 2. トレンド強度判定（短期 > 長期移動平均）
             if sma5 > sma20:
                 winning_score += 25
                 trend_strength = ((sma5 - sma20) / sma20) * 100
                 if trend_strength > 2:
                     winning_score += 10
             elif sma5 > sma50:
-                winning_score += 10  # 中期上昇
+                winning_score += 10
             
-            # 3. 長期トレンド確認（SMA20 > SMA50 > SMA200）
             if sma20 > sma50 > sma200:
-                winning_score += 15  # 強い上昇トレンド
+                winning_score += 15
             elif sma20 > sma50:
                 winning_score += 8
             
-            # 4. 5日間のモメンタム（直近の勢い）
             if 0 < momentum_5d <= 5:
                 winning_score += 15
             elif momentum_5d > 5:
-                winning_score += 12  # 急騰は売られる可能性
+                winning_score += 12
             
-            # 5. 20日間のモメンタム（中期の流れ）
             if 0 < momentum_20d <= 10:
                 winning_score += 10
             elif momentum_20d > 10:
                 winning_score += 5
             
-            # 6. ボリンジャーバンド下限付近（買い時シグナル）
             if current_price < bb_middle:
                 distance_to_lower = ((current_price - bb_lower) / (bb_middle - bb_lower)) * 100 if (bb_middle - bb_lower) != 0 else 0
                 if distance_to_lower < 20:
-                    winning_score += 25  # 下限近い = 強い買いシグナル
+                    winning_score += 25
                 elif distance_to_lower < 40:
                     winning_score += 15
                 elif distance_to_lower < 60:
                     winning_score += 8
             elif current_price > bb_middle and current_price < bb_upper:
-                winning_score += 5  # 上昇中
+                winning_score += 5
             
-            # 7. 直近のボリューム上昇（投資家の関心が高い）
             if vol_ratio > 1.5:
-                winning_score += 18  # ボリューム急増
+                winning_score += 18
             elif vol_ratio > 1.2:
                 winning_score += 12
             elif vol_ratio > 1.1:
                 winning_score += 8
             
-            # 8. MACD クロスシグナル（強い買いシグナル）
             if macd_diff > 0 and current_macd > 0:
-                winning_score += 15  # MACD > Signal で上昇シグナル
+                winning_score += 15
             elif macd_diff > 0:
                 winning_score += 8
             
-            # ★スコアが65以上なら本気の勝てる株として追加★
             if winning_score >= 65:
                 prediction = predict_with_rf(df)
                 predicted_upside = ((prediction - current_price) / current_price) * 100 if current_price > 0 else 0
@@ -259,10 +206,10 @@ def update_ranking_cache():
                     "predictedPrice": round(prediction, 2),
                     "upside": round(predicted_upside, 2)
                 })
-                print(f"✓ 買い候補: {ticker:10} ({name:15}) | スコア {winning_score:3}点 | RSI {current_rsi:6.1f} | モメンタム {momentum_5d:7.2f}% | 上値 {predicted_upside:6.2f}%")
+                print(f"✓ 買い候補: {ticker:10} ({name:15}) | スコア {winning_score:3}点 | RSI {current_rsi:6.1f} | モメンタム {momentum_5d:7.2f}%")
         
         except Exception as e:
-            print(f"✗ エラー: {ticker} - {str(e)[:30]}")
+            print(f"✗ エラー: {ticker}")
         
         time.sleep(0.8)
     
@@ -278,13 +225,11 @@ def update_ranking_cache():
     print("="*60 + "\n")
 
 def analyze_single_ticker(ticker, name):
-    """個別銘柄の詳細解析"""
     try:
         stock = yf.Ticker(ticker)
         df = stock.history(period="5d", interval="5m")
         is_daily = False
         
-        # 5分足がダメなら日足で確実に返す
         if df is None or df.empty or len(df) < 30:
             df = stock.history(period="3mo", interval="1d")
             is_daily = True
@@ -334,18 +279,16 @@ def analyze_single_ticker(ticker, name):
         }
 
 def background_monitoring():
-    """バックグラ��ンドで定期的にランキングを更新"""
     update_ranking_cache() 
     counter = 0
     while True:
         time.sleep(60) 
         counter += 1
-        if counter % 15 == 0:  # 15分ごとに更新
+        if counter % 15 == 0:
             update_ranking_cache()
 
 @app.on_event("startup")
 def startup_event():
-    """サーバー起動時にバックグラウンドタスクを開始"""
     threading.Thread(target=background_monitoring, daemon=True).start()
 
 # ==========================================
@@ -354,7 +297,6 @@ def startup_event():
 
 @app.get("/api/analyze/{ticker}")
 def get_analysis(ticker: str):
-    """個別銘柄の詳細解析を返す"""
     name = TARGET_TICKERS.get(ticker, ticker)
     result = analyze_single_ticker(ticker, name)
     result["timestamp"] = datetime.datetime.now().isoformat()
@@ -362,39 +304,26 @@ def get_analysis(ticker: str):
 
 @app.get("/api/recommend")
 def get_recommendations():
-    """勝てる銘柄トップ10を返す"""
     top_10 = REAL_RANKING_DATA[:10]
     return {"recommendations": top_10, "timestamp": datetime.datetime.now().isoformat()}
-
-# ==========================================
-# 5. ウォレット関連API
-# ==========================================
 
 class WalletRequest(BaseModel):
     user_id: str
     amount: float
 
 @app.post("/api/wallet/deposit")
-def deposit_cash(req: WalletRequest, db: Session = Depends(get_db)):
-    """資金を入金"""
-    wallet = get_user_wallet(db, req.user_id)
-    wallet.balance += req.amount
-    db.commit()
-    return {"status": "success", "balance": wallet.balance}
+def deposit_cash(req: WalletRequest):
+    user_data = get_user_data(req.user_id)
+    user_data["balance"] += req.amount
+    return {"status": "success", "balance": user_data["balance"]}
 
 @app.post("/api/wallet/withdraw")
-def withdraw_cash(req: WalletRequest, db: Session = Depends(get_db)):
-    """資金を出金"""
-    wallet = get_user_wallet(db, req.user_id)
-    if wallet.balance < req.amount:
+def withdraw_cash(req: WalletRequest):
+    user_data = get_user_data(req.user_id)
+    if user_data["balance"] < req.amount:
         raise HTTPException(status_code=400, detail="残高不足")
-    wallet.balance -= req.amount
-    db.commit()
-    return {"status": "success", "balance": wallet.balance}
-
-# ==========================================
-# 6. ポートフォリオ関連API
-# ==========================================
+    user_data["balance"] -= req.amount
+    return {"status": "success", "balance": user_data["balance"]}
 
 class BuyRequest(BaseModel):
     ticker: str
@@ -402,8 +331,7 @@ class BuyRequest(BaseModel):
     user_id: str
 
 @app.post("/api/portfolio/buy")
-def buy_stock(req: BuyRequest, db: Session = Depends(get_db)):
-    """株を購入"""
+def buy_stock(req: BuyRequest):
     name = TARGET_TICKERS.get(req.ticker, req.ticker)
     
     stock_df = yf.Ticker(req.ticker).history(period="5d", interval="1d")
@@ -413,50 +341,64 @@ def buy_stock(req: BuyRequest, db: Session = Depends(get_db)):
     current_price = float(stock_df['Close'].iloc[-1])
     total_cost = current_price * req.shares
 
-    wallet = get_user_wallet(db, req.user_id)
-    if wallet.balance < total_cost:
+    user_data = get_user_data(req.user_id)
+    if user_data["balance"] < total_cost:
         raise HTTPException(status_code=400, detail="残高不足です。")
 
-    wallet.balance -= total_cost
-    new_item = PortfolioItem(ticker=req.ticker, name=name, shares=req.shares, avg_price=current_price, user_id=req.user_id)
-    db.add(new_item)
-    history = TradeHistory(action="BUY", ticker=req.ticker, name=name, profit=0, user_id=req.user_id)
-    db.add(history)
-    db.commit()
+    user_data["balance"] -= total_cost
+    user_data["portfolio"].append({
+        "id": len(user_data["portfolio"]) + 1,
+        "ticker": req.ticker,
+        "name": name,
+        "shares": req.shares,
+        "avgPrice": current_price
+    })
+    user_data["history"].append({
+        "action": "BUY",
+        "ticker": req.ticker,
+        "name": name,
+        "profit": 0,
+        "date": datetime.datetime.now().strftime("%m/%d %H:%M")
+    })
     return {"status": "success"}
 
 @app.get("/api/portfolio")
-def get_portfolio(user_id: str, db: Session = Depends(get_db)):
-    """ポートフォリオ情報を取得"""
-    wallet = get_user_wallet(db, user_id)
-    items = db.query(PortfolioItem).filter(PortfolioItem.user_id == user_id).all()
-    history = db.query(TradeHistory).filter(TradeHistory.user_id == user_id).order_by(TradeHistory.created_at.desc()).limit(10).all()
+def get_portfolio(user_id: str):
+    user_data = get_user_data(user_id)
     return {
-        "cash": wallet.balance,
-        "portfolio": [{"id": i.id, "ticker": i.ticker, "name": i.name, "shares": i.shares, "avgPrice": i.avg_price} for i in items],
-        "history": [{"date": h.created_at.strftime("%m/%d %H:%M"), "action": h.action, "name": h.name, "profit": h.profit} for h in history]
+        "cash": user_data["balance"],
+        "portfolio": user_data["portfolio"],
+        "history": user_data["history"]
     }
 
 @app.post("/api/portfolio/sell/{item_id}")
-def sell_stock(item_id: int, user_id: str, db: Session = Depends(get_db)):
-    """株を売却"""
-    item = db.query(PortfolioItem).filter(PortfolioItem.id == item_id, PortfolioItem.user_id == user_id).first()
-    if not item: 
+def sell_stock(item_id: int, user_id: str):
+    user_data = get_user_data(user_id)
+    item = None
+    for p in user_data["portfolio"]:
+        if p["id"] == item_id:
+            item = p
+            break
+    
+    if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     
-    stock_df = yf.Ticker(item.ticker).history(period="5d", interval="1d")
-    current_price = float(stock_df['Close'].iloc[-1]) if stock_df is not None and not stock_df.empty else item.avg_price
+    stock_df = yf.Ticker(item["ticker"]).history(period="5d", interval="1d")
+    current_price = float(stock_df['Close'].iloc[-1]) if stock_df is not None and not stock_df.empty else item["avgPrice"]
     
-    profit = (current_price - item.avg_price) * item.shares
-    total_revenue = current_price * item.shares
+    profit = (current_price - item["avgPrice"]) * item["shares"]
+    total_revenue = current_price * item["shares"]
 
-    wallet = get_user_wallet(db, user_id)
-    wallet.balance += total_revenue
+    user_data["balance"] += total_revenue
+    user_data["portfolio"].remove(item)
+    user_data["history"].append({
+        "action": "SELL",
+        "ticker": item["ticker"],
+        "name": item["name"],
+        "profit": profit,
+        "date": datetime.datetime.now().strftime("%m/%d %H:%M")
+    })
     
-    history = TradeHistory(action="SELL", ticker=item.ticker, name=item.name, profit=profit, user_id=user_id)
-    db.add(history)
-    db.delete(item)
-    db.commit()
     return {"status": "success", "profit": profit}
 
 if __name__ == "__main__":
