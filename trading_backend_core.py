@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 # ==========================================
-# 1. データベース設定 (成功URLを維持)
+# 1. データベース設定
 # ==========================================
 RAW_SUPABASE_URL = "postgresql://postgres.ezasvrijqcpgroyaayxf:[YOUR-PASSWORD]@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres"
 
@@ -32,7 +32,8 @@ Base = declarative_base()
 class UserWallet(Base):
     __tablename__ = "user_wallet_v1"
     user_id = Column(String, primary_key=True, index=True)
-    balance = Column(Float, default=3000000.0) 
+    # ★ 修正1: 初期残高を 3,000,000.0 から 0.0 に修正しました
+    balance = Column(Float, default=0.0) 
 
 class PortfolioItem(Base):
     __tablename__ = "portfolio_v3"
@@ -64,7 +65,8 @@ def get_db():
 def get_user_wallet(db: Session, user_id: str):
     wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
     if not wallet:
-        wallet = UserWallet(user_id=user_id, balance=3000000.0)
+        # ★ 修正1: 新規ユーザー作成時の残高も 0.0 に修正しました
+        wallet = UserWallet(user_id=user_id, balance=0.0)
         db.add(wallet)
         db.commit()
         db.refresh(wallet)
@@ -73,7 +75,7 @@ def get_user_wallet(db: Session, user_id: str):
 # ==========================================
 # 2. FastAPI 初期化 & ターゲット銘柄
 # ==========================================
-app = FastAPI(title="TradeMaster.AI API v9.0 (Absolute Stable)")
+app = FastAPI(title="TradeMaster.AI API v10.0 (Zero Balance & Guaranteed Top 10)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 TARGET_TICKERS = {
@@ -95,7 +97,6 @@ TARGET_TICKERS = {
 # ==========================================
 REAL_RANKING_DATA = []
 
-# Yahoo Financeから絶対にブロックされないための設定
 yf_session = requests.Session()
 yf_session.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -149,37 +150,37 @@ def update_ranking_cache():
                 recent_vol = float(df['Volume'].iloc[-1])
                 avg_vol = float(df['Volume'].tail(10).mean())
                 
-                # ★ 改善：ご指摘通り「期待度が低いのに出すのはおかしい」を完全に解決。
-                # AIが選ぶ激アツ銘柄として、期待度が【70%〜98%】になるように最適化。
+                # スコア計算
                 rsi_factor = max(0, 100 - current_rsi) / 100.0 
                 dev_factor = max(0, -deviation) 
                 
-                base_score = 60
-                add_score = (rsi_factor * 25) + (dev_factor * 2.0)
+                base_score = 40
+                add_score = (rsi_factor * 30) + (dev_factor * 2.0)
                 
                 momentum = 1.0
                 if avg_vol > 0 and recent_vol > avg_vol:
-                    momentum = min(1.2, recent_vol / avg_vol)
+                    momentum = min(1.5, recent_vol / avg_vol)
                     
                 raw_score = (base_score + add_score) * momentum
-                confidence = max(70, min(98, int(raw_score)))
+                confidence = max(20, min(98, int(raw_score)))
                 
+                # ★ 修正2: 足切りを廃止し、取得できた銘柄はすべてリストに追加する
                 valid_stocks.append({
                     "ticker": ticker,
                     "name": name,
                     "currentPrice": round(current_price, 1),
-                    "action": "CALL",
+                    "action": "CALL" if confidence >= 60 else "WAIT",
                     "confidence": confidence
                 })
         
-        # ★ ブロックを絶対に防ぐため、1社ごとに必ず休む
+        # ブロックを絶対に防ぐため、1社ごとに必ず休む
         time.sleep(0.5)
                 
     if valid_stocks:
-        # 期待度順に並び替え、上位10社だけを厳選
+        # ★ 修正2: 期待度順に並び替え、上位10社を「必ず」抽出して表示する
         valid_stocks.sort(key=lambda x: x['confidence'], reverse=True)
         REAL_RANKING_DATA = valid_stocks[:10]
-        print(f"ランキング更新完了: 上位10社を抽出しました！")
+        print(f"ランキング更新完了: 上位10社を確実に抽出しました！")
 
 def analyze_single_ticker(ticker, name):
     try:
