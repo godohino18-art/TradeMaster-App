@@ -65,10 +65,10 @@ def get_user_wallet(db: Session, user_id: str):
 # ==========================================
 # 2. FastAPI 初期化 & ターゲット銘柄
 # ==========================================
-app = FastAPI(title="TradeMaster.AI API v7.0 (No-Ban Sequential)")
+app = FastAPI(title="TradeMaster.AI API v8.0 (Winning Stocks Only)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# ★修正：絶対にデータが取れる米国株を前半に配置し、確実性を担保
+# ★勝つための厳選銘柄リスト
 TARGET_TICKERS = {
     "NVDA": "NVIDIA", "TSLA": "Tesla", "AAPL": "Apple", 
     "MSFT": "Microsoft", "AMZN": "Amazon", "META": "Meta",
@@ -84,81 +84,201 @@ TARGET_TICKERS = {
 }
 
 # ==========================================
-# 3. 直列データ取得システム（スパム認定回避）
+# 3. AI解析システム（勝つための戦略）
 # ==========================================
 REAL_RANKING_DATA = []
 
 def add_technical_indicators(df):
+    """テクニカル指標を計算"""
     df['SMA5'] = df['Close'].rolling(window=5).mean()
     df['SMA20'] = df['Close'].rolling(window=20).mean()
+    df['SMA50'] = df['Close'].rolling(window=50).mean()
+    df['SMA200'] = df['Close'].rolling(window=200).mean()
+    
     delta = df['Close'].diff()
     up, down = delta.clip(lower=0), -1 * delta.clip(upper=0)
     ema_up = up.ewm(com=14, adjust=False).mean()
     ema_down = down.ewm(com=14, adjust=False).mean()
     df['RSI'] = 100 - (100 / (1 + ema_up / ema_down))
+    
+    # MACD計算
+    ema12 = df['Close'].ewm(span=12, adjust=False).mean()
+    ema26 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = ema12 - ema26
+    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    
     return df.dropna()
 
 def predict_with_rf(df, future_steps=3):
-    if len(df) < 20: return float(df['Close'].iloc[-1])
+    """ランダムフォレストで価格予測"""
+    if len(df) < 20: 
+        return float(df['Close'].iloc[-1])
+    
     features = ['Close', 'SMA5', 'SMA20', 'RSI']
     X = df[features].values[:-future_steps] 
     y = df['Close'].values[future_steps:]
-    if len(X) == 0: return float(df['Close'].iloc[-1])
-    model = RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=-1)
+    
+    if len(X) == 0: 
+        return float(df['Close'].iloc[-1])
+    
+    model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1, max_depth=15)
     model.fit(X, y)
     return float(model.predict(df[features].values[-1].reshape(1, -1))[0])
 
 def update_ranking_cache():
+    """勝てる株を自動抽出するメインロジック"""
     global REAL_RANKING_DATA
     valid_stocks = []
     
-    print("本物データの『直列ダウンロード（スパム回避）』を開始します...")
+    print("\n" + "="*60)
+    print("実トレード対象『勝てる株の抽出』を開始します...")
+    print("="*60)
     
-    # ★修正：並列処理を完全に廃止。1社ずつお行儀よく取得してブロックを100%防ぐ
     for ticker, name in TARGET_TICKERS.items():
         try:
             stock = yf.Ticker(ticker)
             df = stock.history(period="3mo", interval="1d")
             
-            if df is not None and not df.empty and len(df) >= 25:
-                df = add_technical_indicators(df)
-                if len(df) >= 5:
-                    current_price = float(df['Close'].iloc[-1])
-                    current_rsi = float(df['RSI'].iloc[-1])
-                    sma20 = float(df['SMA20'].iloc[-1])
-                    deviation = ((current_price - sma20) / sma20) * 100
-                    recent_vol = float(df['Volume'].iloc[-1])
-                    avg_vol = float(df['Volume'].tail(10).mean())
-                    
-                    # 勝つための厳格な底値判定スコア
-                    rsi_score = max(0, (40 - current_rsi) * 2.5)
-                    dev_score = max(0, -deviation) * 3.0
-                    momentum = 1.0
-                    if avg_vol > 0 and recent_vol > avg_vol:
-                        momentum = min(2.5, recent_vol / avg_vol)
-                        
-                    raw_score = (rsi_score + dev_score + 15) * momentum 
-                    confidence = max(5, min(99, int(raw_score)))
-                    
-                    valid_stocks.append({
-                        "ticker": ticker,
-                        "name": name,
-                        "currentPrice": round(current_price, 1),
-                        "action": "CALL" if confidence >= 50 else "WAIT",
-                        "confidence": confidence
-                    })
-        except Exception as e:
-            print(f"スキップ: {ticker}") # エラーは無視して進む
-        
-        # ★超重要：ヤフーに怒られないよう、必ず0.8秒待ってから次を取得
-        time.sleep(0.8) 
+            if df is None or df.empty or len(df) < 25:
+                continue
                 
+            df = add_technical_indicators(df)
+            if len(df) < 5:
+                continue
+            
+            current_price = float(df['Close'].iloc[-1])
+            current_rsi = float(df['RSI'].iloc[-1])
+            sma5 = float(df['SMA5'].iloc[-1])
+            sma20 = float(df['SMA20'].iloc[-1])
+            sma50 = float(df['SMA50'].iloc[-1])
+            sma200 = float(df['SMA200'].iloc[-1])
+            
+            # 過去5日間の値動き
+            price_5d_ago = float(df['Close'].iloc[-5])
+            momentum_5d = ((current_price - price_5d_ago) / price_5d_ago) * 100
+            
+            # 過去20日間の値動き
+            price_20d_ago = float(df['Close'].iloc[-20])
+            momentum_20d = ((current_price - price_20d_ago) / price_20d_ago) * 100
+            
+            # ボリンジャーバンド計算
+            bb_std = df['Close'].rolling(window=20).std().iloc[-1]
+            bb_middle = sma20
+            bb_upper = bb_middle + (bb_std * 2)
+            bb_lower = bb_middle - (bb_std * 2)
+            
+            # ボリューム分析
+            recent_vol = float(df['Volume'].iloc[-1])
+            avg_vol = float(df['Volume'].tail(20).mean())
+            vol_ratio = recent_vol / avg_vol if avg_vol > 0 else 1.0
+            
+            # MACD分析
+            current_macd = float(df['MACD'].iloc[-1])
+            current_signal = float(df['Signal'].iloc[-1])
+            macd_diff = current_macd - current_signal
+            
+            # ★本気の勝つための条件フィルター★
+            winning_score = 0
+            
+            # 1. RSI判定（売られすぎ＝反発の可能性）
+            if current_rsi < 30:
+                winning_score += 25  # 売られすぎ状態
+            elif 30 <= current_rsi <= 50:
+                winning_score += 20  # 理想的な反発ゾーン
+            elif 50 < current_rsi <= 70:
+                winning_score += 15  # 中立
+            # 70以上は買われすぎなので加点しない
+            
+            # 2. トレンド強度判定（短期 > 長期移動平均）
+            if sma5 > sma20:
+                winning_score += 25
+                trend_strength = ((sma5 - sma20) / sma20) * 100
+                if trend_strength > 2:
+                    winning_score += 10
+            elif sma5 > sma50:
+                winning_score += 10  # 中期上昇
+            
+            # 3. 長期トレンド確認（SMA20 > SMA50 > SMA200）
+            if sma20 > sma50 > sma200:
+                winning_score += 15  # 強い上昇トレンド
+            elif sma20 > sma50:
+                winning_score += 8
+            
+            # 4. 5日間のモメンタム（直近の勢い）
+            if 0 < momentum_5d <= 5:
+                winning_score += 15
+            elif momentum_5d > 5:
+                winning_score += 12  # 急騰は売られる可能性
+            
+            # 5. 20日間のモメンタム（中期の流れ）
+            if 0 < momentum_20d <= 10:
+                winning_score += 10
+            elif momentum_20d > 10:
+                winning_score += 5
+            
+            # 6. ボリンジャーバンド下限付近（買い時シグナル）
+            if current_price < bb_middle:
+                distance_to_lower = ((current_price - bb_lower) / (bb_middle - bb_lower)) * 100 if (bb_middle - bb_lower) != 0 else 0
+                if distance_to_lower < 20:
+                    winning_score += 25  # 下限近い = 強い買いシグナル
+                elif distance_to_lower < 40:
+                    winning_score += 15
+                elif distance_to_lower < 60:
+                    winning_score += 8
+            elif current_price > bb_middle and current_price < bb_upper:
+                winning_score += 5  # 上昇中
+            
+            # 7. 直近のボリューム上昇（投資家の関心が高い）
+            if vol_ratio > 1.5:
+                winning_score += 18  # ボリューム急増
+            elif vol_ratio > 1.2:
+                winning_score += 12
+            elif vol_ratio > 1.1:
+                winning_score += 8
+            
+            # 8. MACD クロスシグナル（強い買いシグナル）
+            if macd_diff > 0 and current_macd > 0:
+                winning_score += 15  # MACD > Signal で上昇シグナル
+            elif macd_diff > 0:
+                winning_score += 8
+            
+            # ★スコアが65以上なら本気の勝てる株として追加★
+            if winning_score >= 65:
+                prediction = predict_with_rf(df)
+                predicted_upside = ((prediction - current_price) / current_price) * 100 if current_price > 0 else 0
+                
+                valid_stocks.append({
+                    "ticker": ticker,
+                    "name": name,
+                    "currentPrice": round(current_price, 2),
+                    "action": "CALL" if predicted_upside > 0.5 else "WAIT",
+                    "confidence": min(99, winning_score),
+                    "momentum": round(momentum_5d, 2),
+                    "rsi": round(current_rsi, 1),
+                    "trend": "上昇" if sma5 > sma20 else "下降",
+                    "predictedPrice": round(prediction, 2),
+                    "upside": round(predicted_upside, 2)
+                })
+                print(f"✓ 買い候補: {ticker:10} ({name:15}) | スコア {winning_score:3}点 | RSI {current_rsi:6.1f} | モメンタム {momentum_5d:7.2f}% | 上値 {predicted_upside:6.2f}%")
+        
+        except Exception as e:
+            print(f"✗ エラー: {ticker} - {str(e)[:30]}")
+        
+        time.sleep(0.8)
+    
+    print("\n" + "="*60)
     if valid_stocks:
         valid_stocks.sort(key=lambda x: x['confidence'], reverse=True)
-        REAL_RANKING_DATA = valid_stocks
-        print(f"ランキング更新完了: {len(valid_stocks)}社の本物データを確保しました！")
+        REAL_RANKING_DATA = valid_stocks[:10]
+        print(f"✓ 勝てる銘柄の抽出完了: {len(REAL_RANKING_DATA)}社を特定しました！")
+        for i, stock in enumerate(REAL_RANKING_DATA, 1):
+            print(f"   {i}. {stock['ticker']:10} - {stock['name']:15} 信頼度 {stock['confidence']}%")
+    else:
+        print("⚠ 現在、買うべき銘柄がありません。市場をモニタリング中...")
+    print("="*60 + "\n")
 
 def analyze_single_ticker(ticker, name):
+    """個別銘柄の詳細解析"""
     try:
         stock = yf.Ticker(ticker)
         df = stock.history(period="5d", interval="5m")
@@ -214,23 +334,27 @@ def analyze_single_ticker(ticker, name):
         }
 
 def background_monitoring():
+    """バックグラ��ンドで定期的にランキングを更新"""
     update_ranking_cache() 
     counter = 0
     while True:
         time.sleep(60) 
         counter += 1
-        if counter % 15 == 0: 
+        if counter % 15 == 0:  # 15分ごとに更新
             update_ranking_cache()
 
 @app.on_event("startup")
 def startup_event():
+    """サーバー起動時にバックグラウンドタスクを開始"""
     threading.Thread(target=background_monitoring, daemon=True).start()
 
 # ==========================================
 # 4. API エンドポイント
 # ==========================================
+
 @app.get("/api/analyze/{ticker}")
 def get_analysis(ticker: str):
+    """個別銘柄の詳細解析を返す"""
     name = TARGET_TICKERS.get(ticker, ticker)
     result = analyze_single_ticker(ticker, name)
     result["timestamp"] = datetime.datetime.now().isoformat()
@@ -238,9 +362,13 @@ def get_analysis(ticker: str):
 
 @app.get("/api/recommend")
 def get_recommendations():
-    # ★ 本物の上位10社を返す
+    """勝てる銘柄トップ10を返す"""
     top_10 = REAL_RANKING_DATA[:10]
     return {"recommendations": top_10, "timestamp": datetime.datetime.now().isoformat()}
+
+# ==========================================
+# 5. ウォレット関連API
+# ==========================================
 
 class WalletRequest(BaseModel):
     user_id: str
@@ -248,6 +376,7 @@ class WalletRequest(BaseModel):
 
 @app.post("/api/wallet/deposit")
 def deposit_cash(req: WalletRequest, db: Session = Depends(get_db)):
+    """資金を入金"""
     wallet = get_user_wallet(db, req.user_id)
     wallet.balance += req.amount
     db.commit()
@@ -255,12 +384,17 @@ def deposit_cash(req: WalletRequest, db: Session = Depends(get_db)):
 
 @app.post("/api/wallet/withdraw")
 def withdraw_cash(req: WalletRequest, db: Session = Depends(get_db)):
+    """資金を出金"""
     wallet = get_user_wallet(db, req.user_id)
     if wallet.balance < req.amount:
         raise HTTPException(status_code=400, detail="残高不足")
     wallet.balance -= req.amount
     db.commit()
     return {"status": "success", "balance": wallet.balance}
+
+# ==========================================
+# 6. ポートフォリオ関連API
+# ==========================================
 
 class BuyRequest(BaseModel):
     ticker: str
@@ -269,6 +403,7 @@ class BuyRequest(BaseModel):
 
 @app.post("/api/portfolio/buy")
 def buy_stock(req: BuyRequest, db: Session = Depends(get_db)):
+    """株を購入"""
     name = TARGET_TICKERS.get(req.ticker, req.ticker)
     
     stock_df = yf.Ticker(req.ticker).history(period="5d", interval="1d")
@@ -292,6 +427,7 @@ def buy_stock(req: BuyRequest, db: Session = Depends(get_db)):
 
 @app.get("/api/portfolio")
 def get_portfolio(user_id: str, db: Session = Depends(get_db)):
+    """ポートフォリオ情報を取得"""
     wallet = get_user_wallet(db, user_id)
     items = db.query(PortfolioItem).filter(PortfolioItem.user_id == user_id).all()
     history = db.query(TradeHistory).filter(TradeHistory.user_id == user_id).order_by(TradeHistory.created_at.desc()).limit(10).all()
@@ -303,8 +439,10 @@ def get_portfolio(user_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/portfolio/sell/{item_id}")
 def sell_stock(item_id: int, user_id: str, db: Session = Depends(get_db)):
+    """株を売却"""
     item = db.query(PortfolioItem).filter(PortfolioItem.id == item_id, PortfolioItem.user_id == user_id).first()
-    if not item: raise HTTPException(status_code=404, detail="Item not found")
+    if not item: 
+        raise HTTPException(status_code=404, detail="Item not found")
     
     stock_df = yf.Ticker(item.ticker).history(period="5d", interval="1d")
     current_price = float(stock_df['Close'].iloc[-1]) if stock_df is not None and not stock_df.empty else item.avg_price
