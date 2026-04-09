@@ -15,7 +15,9 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 # ==========================================
 # 1. データベース設定
 # ==========================================
-# ★修正：RenderのIPv6通信エラーを完全に回避するため、SupabaseのIPv4接続用(ポート6543)プーラーURLに変更
+# ★★★ 超重要 ★★★
+# Supabaseの画面上部「Connect」ボタンから取得したIPv4プール用のURLを以下に貼り付けてください！
+# （パスワードを W%26f4z5Di8h9q に変更するのを忘れずに！）
 SQLALCHEMY_DATABASE_URL = "postgresql://postgres.ezasvrijqcpgroyaayxf:W%26f4z5Di8h9q@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres"
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
@@ -69,7 +71,6 @@ def get_user_wallet(db: Session, user_id: str):
 app = FastAPI(title="TradeMaster.AI API v7.0 (No-Ban Sequential)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# ★修正：絶対にデータが取れる米国株を前半に配置し、確実性を担保
 TARGET_TICKERS = {
     "NVDA": "NVIDIA", "TSLA": "Tesla", "AAPL": "Apple", 
     "MSFT": "Microsoft", "AMZN": "Amazon", "META": "Meta",
@@ -118,12 +119,10 @@ def update_ranking_cache():
     tickers_str = " ".join(tickers_list)
     
     try:
-        # ★ 38社分のデータを「1回の通信」でまとめて取得（絶対にブロックされない）
         data = yf.download(tickers_str, period="3mo", interval="1d", progress=False)
         
         for ticker, name in TARGET_TICKERS.items():
             try:
-                # 取得したデータから1社分を抽出
                 if isinstance(data.columns, pd.MultiIndex):
                     if ticker in data['Close'].columns:
                         df = pd.DataFrame({
@@ -157,7 +156,6 @@ def update_ranking_cache():
                         raw_score = (rsi_score + dev_score + 15) * momentum 
                         confidence = max(5, min(99, int(raw_score)))
                         
-                        # ★ ユーザーの指摘通り、期待度60%未満の銘柄は絶対に表示しない（足切り）
                         if confidence >= 60:
                             valid_stocks.append({
                                 "ticker": ticker,
@@ -178,7 +176,6 @@ def update_ranking_cache():
 
 def analyze_single_ticker(ticker, name):
     try:
-        # ★ 無理に5分足を取ろうとしてブロックされるのをやめ、確実な日足（1d）で取得
         df = yf.download(ticker, period="3mo", interval="1d", progress=False)
         
         if df is None or df.empty or len(df) < 30: 
@@ -201,7 +198,7 @@ def analyze_single_ticker(ticker, name):
         recent_df = df.tail(40)
         chart_data = []
         for idx, row in recent_df.iterrows():
-            time_str = idx.strftime("%m/%d") # 日足なので月/日で表示
+            time_str = idx.strftime("%m/%d") 
             chart_data.append({
                 "time": time_str,
                 "price": round(float(row['Close']), 1),
@@ -253,7 +250,6 @@ def get_analysis(ticker: str):
 
 @app.get("/api/recommend")
 def get_recommendations():
-    # ★ 本物の上位10社を返す
     top_10 = REAL_RANKING_DATA[:10]
     return {"recommendations": top_10, "timestamp": datetime.datetime.now().isoformat()}
 
