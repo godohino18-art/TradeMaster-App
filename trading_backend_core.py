@@ -8,7 +8,6 @@ import uvicorn
 import threading
 import time
 import urllib.parse
-import requests
 import yfinance as yf
 from sklearn.ensemble import RandomForestRegressor
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
@@ -32,7 +31,6 @@ Base = declarative_base()
 class UserWallet(Base):
     __tablename__ = "user_wallet_v1"
     user_id = Column(String, primary_key=True, index=True)
-    # ★ 修正1: 初期残高を 3,000,000.0 から 0.0 に修正しました
     balance = Column(Float, default=0.0) 
 
 class PortfolioItem(Base):
@@ -65,7 +63,6 @@ def get_db():
 def get_user_wallet(db: Session, user_id: str):
     wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
     if not wallet:
-        # ★ 修正1: 新規ユーザー作成時の残高も 0.0 に修正しました
         wallet = UserWallet(user_id=user_id, balance=0.0)
         db.add(wallet)
         db.commit()
@@ -75,7 +72,7 @@ def get_user_wallet(db: Session, user_id: str):
 # ==========================================
 # 2. FastAPI 初期化 & ターゲット銘柄
 # ==========================================
-app = FastAPI(title="TradeMaster.AI API v10.0 (Zero Balance & Guaranteed Top 10)")
+app = FastAPI(title="TradeMaster.AI API v10.1 (YF Session Fix)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 TARGET_TICKERS = {
@@ -97,14 +94,10 @@ TARGET_TICKERS = {
 # ==========================================
 REAL_RANKING_DATA = []
 
-yf_session = requests.Session()
-yf_session.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-})
-
 def fetch_yahoo_data(ticker):
     try:
-        stock = yf.Ticker(ticker, session=yf_session)
+        # ★ 修正: yfinanceの最新仕様に合わせ、自作セッションを渡すのをやめました
+        stock = yf.Ticker(ticker)
         df = stock.history(period="6mo", interval="1d")
         if df is not None and not df.empty and len(df) >= 30:
             return df[['Close', 'Volume']]
@@ -150,7 +143,6 @@ def update_ranking_cache():
                 recent_vol = float(df['Volume'].iloc[-1])
                 avg_vol = float(df['Volume'].tail(10).mean())
                 
-                # スコア計算
                 rsi_factor = max(0, 100 - current_rsi) / 100.0 
                 dev_factor = max(0, -deviation) 
                 
@@ -164,7 +156,6 @@ def update_ranking_cache():
                 raw_score = (base_score + add_score) * momentum
                 confidence = max(20, min(98, int(raw_score)))
                 
-                # ★ 修正2: 足切りを廃止し、取得できた銘柄はすべてリストに追加する
                 valid_stocks.append({
                     "ticker": ticker,
                     "name": name,
@@ -173,11 +164,9 @@ def update_ranking_cache():
                     "confidence": confidence
                 })
         
-        # ブロックを絶対に防ぐため、1社ごとに必ず休む
         time.sleep(0.5)
                 
     if valid_stocks:
-        # ★ 修正2: 期待度順に並び替え、上位10社を「必ず」抽出して表示する
         valid_stocks.sort(key=lambda x: x['confidence'], reverse=True)
         REAL_RANKING_DATA = valid_stocks[:10]
         print(f"ランキング更新完了: 上位10社を確実に抽出しました！")
