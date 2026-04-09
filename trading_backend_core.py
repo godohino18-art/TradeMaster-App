@@ -1,8 +1,8 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import yfinance as yf
 import pandas as pd
+import pandas_datareader.data as web
 import numpy as np
 import datetime
 import uvicorn
@@ -14,15 +14,10 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 # ==========================================
-# 1. データベース設定
+# 1. データベース設定 (前回の成功URLを維持)
 # ==========================================
-# ★★★ 完全最終設定 ★★★
-# いただいた画像から正確なURLを抽出し、パスワード処理も完璧に組み込みました。
-# もう何も書き換える必要はありません。このまま保存してください！
-
 RAW_SUPABASE_URL = "postgresql://postgres.ezasvrijqcpgroyaayxf:[YOUR-PASSWORD]@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres"
 
-# プログラム側でパスワードの特殊文字(&)を安全に変換して結合します
 DB_PASSWORD = urllib.parse.quote_plus("W&f4z5Di8h9q")
 if "[YOUR-PASSWORD]" in RAW_SUPABASE_URL:
     SQLALCHEMY_DATABASE_URL = RAW_SUPABASE_URL.replace("[YOUR-PASSWORD]", DB_PASSWORD)
@@ -77,7 +72,7 @@ def get_user_wallet(db: Session, user_id: str):
 # ==========================================
 # 2. FastAPI 初期化 & ターゲット銘柄
 # ==========================================
-app = FastAPI(title="TradeMaster.AI API v7.2 (Perfect Fix)")
+app = FastAPI(title="TradeMaster.AI API v8.0 (Stooq API Stable)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 TARGET_TICKERS = {
@@ -95,9 +90,21 @@ TARGET_TICKERS = {
 }
 
 # ==========================================
-# 3. 直列データ取得システム（スパム認定回避）
+# 3. 確実なデータ取得システム (Stooqベース)
 # ==========================================
 REAL_RANKING_DATA = []
+
+def fetch_stooq_data(ticker):
+    """テストで成功した確実なデータ取得関数"""
+    stooq_ticker = ticker.replace('.T', '.JP') if '.T' in ticker else ticker + '.US'
+    try:
+        df = web.DataReader(stooq_ticker, 'stooq')
+        if not df.empty:
+            df = df.sort_index() # 古い順に並び替え
+            return df
+    except Exception as e:
+        print(f"Stooq Error for {ticker}: {e}")
+    return None
 
 def add_technical_indicators(df):
     df['SMA5'] = df['Close'].rolling(window=5).mean()
@@ -123,60 +130,34 @@ def update_ranking_cache():
     global REAL_RANKING_DATA
     valid_stocks = []
     
-    print("本物データの『一括ダウンロード（スパム完全回避）』を開始します...")
-    tickers_list = list(TARGET_TICKERS.keys())
-    tickers_str = " ".join(tickers_list)
+    print("本物データ(Stooq)のランキング更新を開始します...")
     
-    try:
-        data = yf.download(tickers_str, period="3mo", interval="1d", progress=False)
-        
-        for ticker, name in TARGET_TICKERS.items():
-            try:
-                if isinstance(data.columns, pd.MultiIndex):
-                    if ticker in data['Close'].columns:
-                        df = pd.DataFrame({
-                            'Close': data['Close'][ticker],
-                            'Volume': data['Volume'][ticker]
-                        }).dropna()
-                    else:
-                        continue
-                else:
-                    if ticker == tickers_list[0]:
-                        df = pd.DataFrame({'Close': data['Close'], 'Volume': data['Volume']}).dropna()
-                    else:
-                        continue
-
-                if not df.empty and len(df) >= 25:
-                    df = add_technical_indicators(df)
-                    if len(df) >= 5:
-                        current_price = float(df['Close'].iloc[-1])
-                        current_rsi = float(df['RSI'].iloc[-1])
-                        sma20 = float(df['SMA20'].iloc[-1])
-                        deviation = ((current_price - sma20) / sma20) * 100
-                        recent_vol = float(df['Volume'].iloc[-1])
-                        avg_vol = float(df['Volume'].tail(10).mean())
-                        
-                        rsi_score = max(0, (40 - current_rsi) * 2.5)
-                        dev_score = max(0, -deviation) * 3.0
-                        momentum = 1.0
-                        if avg_vol > 0 and recent_vol > avg_vol:
-                            momentum = min(2.5, recent_vol / avg_vol)
-                            
-                        raw_score = (rsi_score + dev_score + 15) * momentum 
-                        confidence = max(5, min(99, int(raw_score)))
-                        
-                        if confidence >= 60:
-                            valid_stocks.append({
-                                "ticker": ticker,
-                                "name": name,
-                                "currentPrice": round(current_price, 1),
-                                "action": "CALL",
-                                "confidence": confidence
-                            })
-            except Exception as e:
-                continue 
-    except Exception as e:
-        print("一括ダウンロードエラー:", e)
+    for ticker, name in TARGET_TICKERS.items():
+        df = fetch_stooq_data(ticker)
+        if df is not None and not df.empty and len(df) >= 25:
+            df = add_technical_indicators(df)
+            if len(df) >= 5:
+                current_price = float(df['Close'].iloc[-1])
+                current_rsi = float(df['RSI'].iloc[-1])
+                sma20 = float(df['SMA20'].iloc[-1])
+                deviation = ((current_price - sma20) / sma20) * 100
+                
+                # 勝つための厳格な底値判定スコア
+                rsi_score = max(0, (40 - current_rsi) * 2.5)
+                dev_score = max(0, -deviation) * 3.0
+                raw_score = rsi_score + dev_score + 15
+                confidence = max(5, min(99, int(raw_score)))
+                
+                # 期待度60%以上の勝負銘柄のみリストアップ
+                if confidence >= 60:
+                    valid_stocks.append({
+                        "ticker": ticker,
+                        "name": name,
+                        "currentPrice": round(current_price, 1),
+                        "action": "CALL",
+                        "confidence": confidence
+                    })
+        time.sleep(0.5) # Stooqへの負荷を掛けないための休止
                 
     if valid_stocks:
         valid_stocks.sort(key=lambda x: x['confidence'], reverse=True)
@@ -185,13 +166,10 @@ def update_ranking_cache():
 
 def analyze_single_ticker(ticker, name):
     try:
-        df = yf.download(ticker, period="3mo", interval="1d", progress=False)
+        df = fetch_stooq_data(ticker)
         
         if df is None or df.empty or len(df) < 30: 
             raise Exception("データ取得失敗")
-            
-        if isinstance(df.columns, pd.MultiIndex):
-            df = df.xs(ticker, level=1, axis=1)
             
         df = add_technical_indicators(df)
         if len(df) < 5: 
@@ -204,6 +182,7 @@ def analyze_single_ticker(ticker, name):
         diff_percent = (prediction - current_price) / current_price
         action = "CALL" if diff_percent > 0.003 else "WAIT"
 
+        # チャート用に直近40日分を抽出
         recent_df = df.tail(40)
         chart_data = []
         for idx, row in recent_df.iterrows():
@@ -291,11 +270,12 @@ class BuyRequest(BaseModel):
 def buy_stock(req: BuyRequest, db: Session = Depends(get_db)):
     name = TARGET_TICKERS.get(req.ticker, req.ticker)
     
-    stock_df = yf.Ticker(req.ticker).history(period="5d", interval="1d")
-    if stock_df is None or stock_df.empty:
+    # 確実なStooq APIで価格を取得
+    df = fetch_stooq_data(req.ticker)
+    if df is None or df.empty:
         raise HTTPException(status_code=400, detail="現在の株価が取得できませんでした")
         
-    current_price = float(stock_df['Close'].iloc[-1])
+    current_price = float(df['Close'].iloc[-1])
     total_cost = current_price * req.shares
 
     wallet = get_user_wallet(db, req.user_id)
@@ -326,8 +306,8 @@ def sell_stock(item_id: int, user_id: str, db: Session = Depends(get_db)):
     item = db.query(PortfolioItem).filter(PortfolioItem.id == item_id, PortfolioItem.user_id == user_id).first()
     if not item: raise HTTPException(status_code=404, detail="Item not found")
     
-    stock_df = yf.Ticker(item.ticker).history(period="5d", interval="1d")
-    current_price = float(stock_df['Close'].iloc[-1]) if stock_df is not None and not stock_df.empty else item.avg_price
+    df = fetch_stooq_data(item.ticker)
+    current_price = float(df['Close'].iloc[-1]) if df is not None and not df.empty else item.avg_price
     
     profit = (current_price - item.avg_price) * item.shares
     total_revenue = current_price * item.shares

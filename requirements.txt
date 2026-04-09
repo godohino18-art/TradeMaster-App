@@ -1,9 +1,9 @@
 fastapi
 uvicorn
-yfinance
 pandas
 numpy
 scikit-learn
 sqlalchemy
 requests
 psycopg2-binary
+pandas-datareader
