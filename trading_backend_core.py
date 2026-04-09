@@ -15,7 +15,8 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 # ==========================================
 # 1. データベース設定
 # ==========================================
-SQLALCHEMY_DATABASE_URL = "postgresql://postgres:W%26f4z5Di8h9q@db.ezasvrijqcpgroyaayxf.supabase.co:5432/postgres"
+# ★修正：RenderのIPv6通信エラーを完全に回避するため、SupabaseのIPv4接続用(ポート6543)プーラーURLに変更
+SQLALCHEMY_DATABASE_URL = "postgresql://postgres.ezasvrijqcpgroyaayxf:W%26f4z5Di8h9q@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres"
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
